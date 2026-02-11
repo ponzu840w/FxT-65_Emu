@@ -22,34 +22,35 @@ void WriteMem(uint16_t addr, uint8_t val)
 }
 
 int main() {
-    // リセットベクタ $F000
-    rom[0x0FFC] = 0x00;
-    rom[0x0FFD] = 0xF0;
+  // リセットベクタ $F000
+  rom[0x0FFC] = 0x00;
+  rom[0x0FFD] = 0xF0;
 
-    // テストプログラム
-    rom[0x0000] = 0xEA; // $F000 NOP
-    rom[0x0001] = 0x4C; // $F001 JMP $F000
-    rom[0x0002] = 0x00;
-    rom[0x0003] = 0xF0;
+  // テストプログラム 無限ループ
+  rom[0x0000] = 0xEA; // $F000 NOP
+  rom[0x0001] = 0x4C; // $F001 JMP $F000
+  rom[0x0002] = 0x00;
+  rom[0x0003] = 0xF0;
 
-    // CPU作成
-    VrEmu6502 *cpu = vrEmu6502New(CPU_W65C02, ReadMem, WriteMem);
-    // CPUリセット
-    vrEmu6502Reset(cpu);
+  // CPU作成
+  VrEmu6502 *cpu = vrEmu6502New(CPU_W65C02, ReadMem, WriteMem);
+  // CPUリセット
+  vrEmu6502Reset(cpu);
 
-    printf("CPUエミュレーション開始 PC: %04X\n", vrEmu6502GetPC(cpu));
+  printf("CPUエミュレーション開始 PC: %04X\n", vrEmu6502GetPC(cpu));
 
-    // 10サイクル実行
-    for (int i = 0; i < 10; i++) {
-        uint16_t pc = vrEmu6502GetPC(cpu);
-        uint8_t op = vrEmu6502GetNextOpcode(cpu);
+  // 10サイクル実行
+  for (int i = 0; i < 10; i++)
+  {
+    uint16_t pc = vrEmu6502GetPC(cpu);
+    uint8_t op = vrEmu6502GetNextOpcode(cpu);
 
-        printf("サイクル: %d | PC: %04X | オペコード: %02X\n", i, pc, op);
+    printf("サイクル: %d | PC: %04X | オペコード: %02X\n", i, pc, op);
 
-        vrEmu6502Tick(cpu);
-    }
+    // 1サイクル進める
+    vrEmu6502Tick(cpu);
+  }
 
-    vrEmu6502Destroy(cpu);
-    return 0;
+  return 0;
 }
 
