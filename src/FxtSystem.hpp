@@ -3,7 +3,6 @@
 
 #include <vector>  // メモリ配列用
 #include <cstdint> // 固定長整数
-#include <cstdio>  // ファイルIO
 #include <string>  // 文字列
 
 extern "C"
@@ -11,29 +10,14 @@ extern "C"
   #include "lib/vrEmu6502.h"
 }
 
-// 前方宣言
-struct FxtSystem;
-namespace Fxt
-{
-  uint8_t BusRead(FxtSystem& sys, uint16_t addr);
-  void    BusWrite(FxtSystem& sys, uint16_t addr, uint8_t val);
-}
-
 struct FxtSystem
 {
   // インスタンスのポインタ
-  inline static FxtSystem* s_instance = nullptr;
+  static FxtSystem* s_instance;
 
   // Cライブラリに渡すためのブリッジ関数
-  static uint8_t BridgeRead(uint16_t addr, bool isDbg)
-  {
-    if (s_instance) return Fxt::BusRead(*s_instance, addr);
-    return 0;
-  }
-  static void BridgeWrite(uint16_t addr, uint8_t val)
-  {
-    if (s_instance) Fxt::BusWrite(*s_instance, addr, val);
-  }
+  static uint8_t BridgeRead(uint16_t addr, bool isDbg);
+  static void BridgeWrite(uint16_t addr, uint8_t val);
 
   // CPU
   VrEmu6502* cpu = nullptr;
@@ -48,90 +32,26 @@ struct FxtSystem
   uint8_t uart_input_buffer = 0;
   uint8_t uart_status = 0;
 
-  // コンストラクタ
-  FxtSystem()
-  {
-    // メモリ初期化
-    ram.resize(0x8000, 0);
-    rom.resize(0x1000, 0);
-  }
-
-  ~FxtSystem() {}
+  // コンストラクタ デストラクタ
+  FxtSystem();
+  ~FxtSystem();
 };
 
 namespace Fxt
 {
-  uint8_t BusRead(FxtSystem& sys, uint16_t addr);
-  void    BusWrite(FxtSystem& sys, uint16_t addr, uint8_t val);
-
   // ROMロード
-  bool LoadRom(FxtSystem& sys, const std::string& filename)
-  {
-    FILE* fp = fopen(filename.c_str(), "rb");
-    if (!fp) return false;
-
-    fseek(fp, 0, SEEK_END);
-    long size = ftell(fp);
-    rewind(fp);
-
-    if (size != 8192) return false;
-
-    fseek(fp, 4096, SEEK_SET);
-    fread(sys.rom.data(), 1, size, fp);
-    fclose(fp);
-    return true;
-  }
-
+  bool LoadRom(FxtSystem& sys, const std::string& filename);
   // システム初期化
-  void Init(FxtSystem& sys)
-  {
-    FxtSystem::s_instance = &sys;
-    sys.cpu = vrEmu6502New(CPU_W65C02, FxtSystem::BridgeRead, FxtSystem::BridgeWrite);
-    vrEmu6502Reset(sys.cpu);
-    sys.irqPin = vrEmu6502Int(sys.cpu);
-    sys.nmiPin = vrEmu6502Nmi(sys.cpu);
-  }
-
-  // バス読み込み
-  uint8_t BusRead(FxtSystem& sys, uint16_t addr)
-  {
-    // RAM
-    if (addr < 0x8000) return sys.ram[addr];
-    // IO and ROM
-    if (addr >= 0xE000)
-    {
-      // I/O
-      // --- VIA IFR
-      if (addr == 0xE20D) return 0xFF;
-      // --- UART RX
-      if (addr == 0xE000)
-      {
-        if (sys.irqPin) *sys.irqPin = IntCleared;
-        sys.uart_status &= 0b11110111;
-        return sys.uart_input_buffer;
-      }
-      // --- UART STATUS
-      if (addr == 0xE001) return sys.uart_status;
-      // ROM
-      if (addr >= 0xF000) return sys.rom[addr & 0x0FFF];
-    }
-    return 0;
-  }
-
-  // バス書き込み
-  void BusWrite(FxtSystem& sys, uint16_t addr, uint8_t val)
-  {
-    if (addr < 0x8000) sys.ram[addr] = val;
-    if (addr == 0xE000) putchar(val);
-  }
-
+  void Init(FxtSystem& sys);
+  // バス読み書き
+  uint8_t BusRead(FxtSystem& sys, uint16_t addr);
+  void BusWrite(FxtSystem& sys, uint16_t addr, uint8_t val);
   // 1サイクル実行
-  void Tick(FxtSystem& sys) { if (sys.cpu) vrEmu6502Tick(sys.cpu); }
-
+  void Tick(FxtSystem& sys);
   // 割り込み操作
-  void RequestIrq(FxtSystem& sys) { if (sys.irqPin) *sys.irqPin = IntRequested; }
-  void ClearIrq(FxtSystem& sys) { if (sys.irqPin) *sys.irqPin = IntCleared; }
-  void RequestNmi(FxtSystem& sys) { if (sys.nmiPin) *sys.nmiPin = IntRequested; }
-  void ClearNmi(FxtSystem& sys) { if (sys.nmiPin) *sys.nmiPin = IntCleared; }
+  void RequestIrq(FxtSystem& sys);
+  void ClearIrq(FxtSystem& sys);
+  void RequestNmi(FxtSystem& sys);
+  void ClearNmi(FxtSystem& sys);
 }
 
