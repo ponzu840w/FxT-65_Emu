@@ -11,8 +11,30 @@ extern "C"
   #include "lib/vrEmu6502.h"
 }
 
+// 前方宣言
+struct FxtSystem;
+namespace Fxt
+{
+  uint8_t BusRead(FxtSystem& sys, uint16_t addr);
+  void    BusWrite(FxtSystem& sys, uint16_t addr, uint8_t val);
+}
+
 struct FxtSystem
 {
+  // インスタンスのポインタ
+  inline static FxtSystem* s_instance = nullptr;
+
+  // Cライブラリに渡すためのブリッジ関数
+  static uint8_t BridgeRead(uint16_t addr, bool isDbg)
+  {
+    if (s_instance) return Fxt::BusRead(*s_instance, addr);
+    return 0;
+  }
+  static void BridgeWrite(uint16_t addr, uint8_t val)
+  {
+    if (s_instance) Fxt::BusWrite(*s_instance, addr, val);
+  }
+
   // CPU
   VrEmu6502* cpu = nullptr;
   vrEmu6502Interrupt* irqPin = nullptr;
@@ -31,7 +53,7 @@ struct FxtSystem
   {
     // メモリ初期化
     ram.resize(0x8000, 0);
-    rom.resize(0x2000, 0);
+    rom.resize(0x1000, 0);
   }
 
   ~FxtSystem() {}
@@ -61,9 +83,10 @@ namespace Fxt
   }
 
   // システム初期化
-  void Init(FxtSystem& sys, vrEmu6502MemRead readFn, vrEmu6502MemWrite writeFn)
+  void Init(FxtSystem& sys)
   {
-    sys.cpu = vrEmu6502New(CPU_W65C02, readFn, writeFn);
+    FxtSystem::s_instance = &sys;
+    sys.cpu = vrEmu6502New(CPU_W65C02, FxtSystem::BridgeRead, FxtSystem::BridgeWrite);
     vrEmu6502Reset(sys.cpu);
     sys.irqPin = vrEmu6502Int(sys.cpu);
     sys.nmiPin = vrEmu6502Nmi(sys.cpu);

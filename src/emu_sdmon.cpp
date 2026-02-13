@@ -5,23 +5,17 @@
 #include <signal.h>   // signal
 #include <cstdio>
 
+// 前方宣言
 void FormatFlags(uint8_t p, char* buf);
 void PrintCpusys(FxtSystem& sys);
 
+// 実行継続フラグ
 volatile sig_atomic_t g_running = 1;
-static FxtSystem* g_sys = nullptr;
+// Ctrl+C ハンドラ
+void handle_sigint(int sig) { g_running = 0; }
 
-uint8_t Bridge_Read(uint16_t addr, bool isDbg)
-{
-  if (g_sys) return Fxt::BusRead(*g_sys, addr);
-  return 0;
-}
-
-void Bridge_Write(uint16_t addr, uint8_t val)
-{
-  if (g_sys) Fxt::BusWrite(*g_sys, addr, val);
-}
-
+// 生成で端末をノンブロッキング入力可能にして、
+// スコープを外れると元に戻す
 struct TerminalSession
 {
   struct termios oldt;
@@ -50,13 +44,10 @@ struct TerminalSession
   }
 };
 
-// Ctrl+C ハンドラ
-void handle_sigint(int sig) { g_running = 0; }
-
 int main()
 {
+  // システムを生成
   FxtSystem sys;
-  g_sys = &sys;
 
   // ROMロード
   if (!Fxt::LoadRom(sys, "assets/rom.bin"))
@@ -65,22 +56,26 @@ int main()
     return 1;
   }
 
+  // 端末ノンブロッキング入力設定
   TerminalSession term;
   signal(SIGINT, handle_sigint);
 
   // 初期化
-  Fxt::Init(sys, Bridge_Read, Bridge_Write);
+  Fxt::Init(sys);
 
+  // IPL初期化処理実行
   for(int i=0; i<500000; i++)
   {
     //PrintCpusys(sys);
     Fxt::Tick(sys);
   }
 
+  // NMI割り込みでsdmon起動
   Fxt::RequestNmi(sys);
   for(int i=0; i<10; i++) Fxt::Tick(sys);
   Fxt::ClearNmi(sys);
 
+  // sdmon実行ループ
   while(g_running)
   {
     //PrintCpusys(sys);
@@ -134,8 +129,8 @@ void PrintCpusys(FxtSystem& sys)
   uint16_t zr[6];
   for (int i = 0; i < 6; i++)
   {
-    uint8_t lo = Bridge_Read(i * 2, true);
-    uint8_t hi = Bridge_Read(i * 2 + 1, true);
+    uint8_t lo = sys.ram[i * 2];
+    uint8_t hi = sys.ram[i * 2 + 1];
     zr[i] = (hi << 8) | lo;
   }
 
