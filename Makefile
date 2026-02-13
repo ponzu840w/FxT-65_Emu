@@ -1,26 +1,66 @@
 # Makefile
 
-CXX = g++
-CC = cc
-CXXFLAGS = -std=c++11 -Wall
-CFLAGS = -O2
+# ----------
+#    設定
+# ----------
 
+# コンパイラ
+CXX       := g++
+CC        := cc
+
+# コンパイルオプション
+CXXFLAGS  := -std=c++11 -Wall
+CFLAGS    := -O2
+
+# ディレクトリ
+SRC_DIR   := src
+OBJ_DIR   := obj
+LIB_DIR   := $(SRC_DIR)/lib
+
+# ターゲット
 TARGET = fxt65
 
-OBJS = emu_sdmon.o vrEmu6502.o FxtSystem.o
+# ----------
+#  自動探索
+# ----------
 
+# ソースファイルをリストアップ
+SRCS_CPP := $(wildcard $(SRC_DIR)/*.cpp)
+SRCS_C   := $(wildcard $(LIB_DIR)/*.c)
+
+# オブジェクトファイルのパスを生成
+OBJS_CPP := $(SRCS_CPP:%.cpp=$(OBJ_DIR)/%.o)
+OBJS_C   := $(SRCS_C:%.c=$(OBJ_DIR)/%.o)
+
+# オブジェクトファイルのリスト
+OBJS     := $(OBJS_CPP) $(OBJS_C)
+
+# ----------
+#   ビルド
+# ----------
+
+# リンク
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJS)
+	@echo "Linking $@"
+	@$(CXX) $(CXXFLAGS) -o $@ $^
+	@echo "Build Complete!"
 
-emu_sdmon.o: ./src/emu_sdmon.cpp
-	$(CXX) $(CXXFLAGS) -c ./src/emu_sdmon.cpp
+# C++
+$(OBJ_DIR)/%.o: %.cpp
+	@echo "Compiling C++: $<"
+	@mkdir -p $(dir $@)
+	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
-FxtSystem.o: src/FxtSystem.cpp src/FxtSystem.hpp
-	$(CXX) $(CXXFLAGS) -c src/FxtSystem.cpp
+# C
+$(OBJ_DIR)/%.o: %.c
+	@echo "Compiling C  : $<"
+	@mkdir -p $(dir $@)
+	@$(CC) $(CFLAGS) -c $< -o $@
 
-vrEmu6502.o: ./src/lib/vrEmu6502.c
-	$(CC) $(CFLAGS) -c ./src/lib/vrEmu6502.c
-
+# クリーンアップ
 clean:
-	rm -f *.o $(TARGET)
+	@echo "Cleaning up..."
+	@rm -rf $(OBJ_DIR) $(TARGET)
+
+.PHONY: clean
 
