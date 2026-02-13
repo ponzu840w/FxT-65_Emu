@@ -1,0 +1,150 @@
+#include "FxtSystem.hpp"
+#include <unistd.h>   // 標準入出力 STDIN_FILENO
+#include <termios.h>  // ターミナル設定
+#include <fcntl.h>    // ファイル記述子制御 ノンブロッキング
+#include <signal.h>   // signal
+#include <cstdio>
+
+void FormatFlags(uint8_t p, char* buf);
+void PrintCpusys(FxtSystem& sys);
+
+volatile sig_atomic_t g_running = 1;
+static FxtSystem* g_sys = nullptr;
+
+uint8_t Bridge_Read(uint16_t addr, bool isDbg)
+{
+  if (g_sys) return Fxt::BusRead(*g_sys, addr);
+  return 0;
+}
+
+void Bridge_Write(uint16_t addr, uint8_t val)
+{
+  if (g_sys) Fxt::BusWrite(*g_sys, addr, val);
+}
+
+struct TerminalSession
+{
+  struct termios oldt;
+  int oldf;
+  bool active = false;
+
+  TerminalSession()
+  {
+    tcgetattr(STDIN_FILENO, &oldt);
+    struct termios newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+    active = true;
+  }
+
+  ~TerminalSession()
+  {
+    if (active)
+    {
+      tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+      fcntl(STDIN_FILENO, F_SETFL, oldf);
+    }
+  }
+};
+
+// Ctrl+C ハンドラ
+void handle_sigint(int sig) { g_running = 0; }
+
+int main()
+{
+  FxtSystem sys;
+  g_sys = &sys;
+
+  // ROMロード
+  if (!Fxt::LoadRom(sys, "assets/rom.bin"))
+  {
+    fprintf(stderr, "Error: ROM読み込みに失敗\n");
+    return 1;
+  }
+
+  TerminalSession term;
+  signal(SIGINT, handle_sigint);
+
+  // 初期化
+  Fxt::Init(sys, Bridge_Read, Bridge_Write);
+
+  for(int i=0; i<500000; i++)
+  {
+    //PrintCpusys(sys);
+    Fxt::Tick(sys);
+  }
+
+  Fxt::RequestNmi(sys);
+  for(int i=0; i<10; i++) Fxt::Tick(sys);
+  Fxt::ClearNmi(sys);
+
+  while(g_running)
+  {
+    //PrintCpusys(sys);
+
+    // 標準入力があればUARTから送信する
+    int ch = getchar();
+    if (ch != EOF)
+    {
+      sys.uart_input_buffer = (uint8_t)ch;
+      sys.uart_status |= 0b00001000;
+      Fxt::RequestIrq(sys);
+    }
+
+    Fxt::Tick(sys);
+  }
+}
+
+// フラグを文字列化するヘルパ ("NV-BDIZC")
+void FormatFlags(uint8_t p, char* buf)
+{
+  const char* names = "NV-BDIZC";
+  for (int i = 0; i < 8; i++)
+  {
+    // ビット7(N)からビット0(C)の順にチェック
+    if (p & (0x80 >> i)) buf[i] = names[i];
+    else                 buf[i] = '.';
+  }
+  buf[8] = '\0';
+}
+
+// デバッグ表示
+void PrintCpusys(FxtSystem& sys)
+{
+  VrEmu6502* cpu = sys.cpu;
+  uint16_t pc = vrEmu6502GetPC(cpu);
+
+  // 逆アセンブル
+  char disasm[32];
+  vrEmu6502DisassembleInstruction(cpu, pc, sizeof(disasm), disasm, NULL, NULL);
+
+  // レジスタ取得
+  uint8_t a = vrEmu6502GetAcc(cpu);
+  uint8_t x = vrEmu6502GetX(cpu);
+  uint8_t y = vrEmu6502GetY(cpu);
+  uint8_t s = vrEmu6502GetStackPointer(cpu);
+  uint8_t p = vrEmu6502GetStatus(cpu);
+  char flags_str[9];
+  FormatFlags(p, flags_str);
+
+  // ZR取得
+  uint16_t zr[6];
+  for (int i = 0; i < 6; i++)
+  {
+    uint8_t lo = Bridge_Read(i * 2, true);
+    uint8_t hi = Bridge_Read(i * 2 + 1, true);
+    zr[i] = (hi << 8) | lo;
+  }
+
+  // 一括表示
+  // PC | 逆アセンブル | レジスタ | フラグ | ZR
+  printf("$%04X: %-14s | A:%02X X:%02X Y:%02X S:%02X P:%s | ZR0:%04X ZR1:%04X ZR2:%04X ZR3:%04X ZR4:%04X ZR5:%04X\n",
+         pc, disasm,
+         a, x, y, s, flags_str,
+         zr[0], zr[1], zr[2], zr[3], zr[4], zr[5]);
+  //fflush(stdout);
+  //usleep(10000);
+}
