@@ -43,7 +43,7 @@ OBJS     := $(OBJS_CPP) $(OBJS_C)
 $(TARGET): $(OBJS)
 	@echo "Linking $@"
 	@$(CXX) $(CXXFLAGS) -o $@ $^
-	@echo "Build Complete!"
+	@echo "Build Complete."
 
 # C++
 $(OBJ_DIR)/%.o: %.cpp
@@ -59,7 +59,7 @@ $(OBJ_DIR)/%.o: %.c
 
 # クリーンアップ
 clean:
-	@echo "Cleaning up..."
+	@echo "Cleaning up."
 	@rm -rf $(OBJ_DIR) $(TARGET)
 
 .PHONY: clean
