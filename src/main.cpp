@@ -69,50 +69,32 @@ int main()
   // 初期化
   Fxt::Init(sys);
 
-  // IPL初期化処理実行
-  for(int i=0; i<500000; i++)
-  {
-    //PrintCpusys(sys);
-    Fxt::Tick(sys);
-  }
-
-  /*
-  // BCOSをRAMにロード
-  FILE* fp = fopen("assets/MIRACOS_SDC/BCOS.SYS", "rb");
-  if (!fp) return 1;
-  fseek(fp, 0, SEEK_END);
-  long size = ftell(fp);
-  rewind(fp);
-  fread(sys.ram.data()+0x5300, 1, size, fp);
-  fclose(fp);
-
-  // BCOS冒頭に飛ぶ
-  VrEmu6502* cpu = sys.cpu;
-  vrEmu6502SetPC(cpu, 0x5300);
-  */
-
   // 実行ループ
+  int cnt = 0;
   while(g_running)
   {
-    //PrintCpusys(sys);
-
-    // 標準入力があればUARTから送信する
-    int ch = getchar();
-    if (ch != EOF)
+    // 4096回に1回の標準入力処理
+    if ((cnt++ & 0xFFF) == 0xFFF)
     {
-      sys.uart_input_buffer = (uint8_t)ch;
-      sys.uart_status |= 0b00001000;
-      Fxt::UpdateIrq(sys);
-
-      if (ch == 'N'-0x40) // CTRL+N
+      // 標準入力があればUARTから送信する
+      int ch = getchar();
+      if (ch != EOF)
       {
-        // NMI割り込みでsdmon起動
-        Fxt::RequestNmi(sys);
-        for(int i=0; i<10; i++) Fxt::Tick(sys);
-        Fxt::ClearNmi(sys);
+        sys.uart_input_buffer = (uint8_t)ch;
+        sys.uart_status |= 0b00001000;
+        Fxt::UpdateIrq(sys);
+
+        if (ch == 'N'-0x40) // CTRL+N
+        {
+          // NMI割り込みでsdmon起動
+          Fxt::RequestNmi(sys);
+          for(int i=0; i<10; i++) Fxt::Tick(sys);
+          Fxt::ClearNmi(sys);
+        }
       }
     }
 
+    //PrintCpusys(sys);
     Fxt::Tick(sys);
   }
 }

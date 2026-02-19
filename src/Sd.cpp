@@ -3,7 +3,7 @@
 #include "FxtSystem.hpp"
 #include <cstring>
 
-#define DEBUG_SD
+//#define DEBUG_SD // 定義するとデバッグ情報が出る
 
 namespace Fxt
 {
