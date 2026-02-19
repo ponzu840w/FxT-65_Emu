@@ -10,22 +10,16 @@ namespace Fxt
   // Cライブラリに渡すためのブリッジ関数
   uint8_t System::BridgeRead(uint16_t addr, bool isDbg)
   {
-    if (s_instance) return BusRead(*s_instance, addr);
-    return 0;
+    return BusRead(*s_instance, addr);
   }
 
   void System::BridgeWrite(uint16_t addr, uint8_t val)
   {
-    if (s_instance) BusWrite(*s_instance, addr, val);
+    BusWrite(*s_instance, addr, val);
   }
 
   // コンストラクタ
-  System::System()
-  {
-    // メモリ初期化
-    ram.resize(0x8000, 0);
-    rom.resize(0x1000, 0);
-  }
+  System::System() {}
 
   // デストラクタ
   System::~System() {}
@@ -60,7 +54,7 @@ namespace Fxt
     if (size != 8192) return false;
 
     fseek(fp, 4096, SEEK_SET);
-    fread(sys.rom.data(), 1, size, fp);
+    fread(sys.rom, 1, size, fp);
     fclose(fp);
     return true;
   }
@@ -116,7 +110,7 @@ namespace Fxt
   // 1サイクル実行
   void Tick(System& sys)
   {
-    if (sys.cpu) vrEmu6502Tick(sys.cpu);
+    vrEmu6502Tick(sys.cpu);
     Via::Tick(sys);
   }
 

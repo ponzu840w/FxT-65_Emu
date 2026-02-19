@@ -31,8 +31,8 @@ namespace Fxt
     vrEmu6502Interrupt* nmiPin = nullptr;
 
     // メモリ
-    std::vector<uint8_t> ram;
-    std::vector<uint8_t> rom;
+    uint8_t ram[0x8000];
+    uint8_t rom[0x1000];
 
     // UART
     uint8_t uart_input_buffer = 0;
