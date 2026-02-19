@@ -114,6 +114,10 @@ namespace Fxt
   }
 
   // 1サイクル実行
-  void Tick(System& sys) { if (sys.cpu) vrEmu6502Tick(sys.cpu); }
+  void Tick(System& sys)
+  {
+    if (sys.cpu) vrEmu6502Tick(sys.cpu);
+    Via::Tick(sys);
+  }
 
 }
