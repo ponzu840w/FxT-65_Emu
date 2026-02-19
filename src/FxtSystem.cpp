@@ -1,38 +1,54 @@
-/* FxtSystem.cpp */
+/* src/FxtSystem.cpp */
 #include "FxtSystem.hpp"
 #include <cstdio>
 
-
-// インスタンスのポインタ
-FxtSystem* FxtSystem::s_instance = nullptr;
-
-// Cライブラリに渡すためのブリッジ関数
-uint8_t FxtSystem::BridgeRead(uint16_t addr, bool isDbg)
-{
-  if (s_instance) return Fxt::BusRead(*s_instance, addr);
-  return 0;
-}
-
-void FxtSystem::BridgeWrite(uint16_t addr, uint8_t val)
-{
-  if (s_instance) Fxt::BusWrite(*s_instance, addr, val);
-}
-
-// コンストラクタ
-FxtSystem::FxtSystem()
-{
-  // メモリ初期化
-  ram.resize(0x8000, 0);
-  rom.resize(0x1000, 0);
-}
-
-// デストラクタ
-FxtSystem::~FxtSystem() {}
-
 namespace Fxt
 {
+  // インスタンスのポインタ
+  System* System::s_instance = nullptr;
+
+  // Cライブラリに渡すためのブリッジ関数
+  uint8_t System::BridgeRead(uint16_t addr, bool isDbg)
+  {
+    if (s_instance) return BusRead(*s_instance, addr);
+    return 0;
+  }
+
+  void System::BridgeWrite(uint16_t addr, uint8_t val)
+  {
+    if (s_instance) BusWrite(*s_instance, addr, val);
+  }
+
+  // コンストラクタ
+  System::System()
+  {
+    // メモリ初期化
+    ram.resize(0x8000, 0);
+    rom.resize(0x1000, 0);
+  }
+
+  // デストラクタ
+  System::~System() {}
+
+  // 周辺機器の状態に応じて割り込み線を更新
+  void UpdateIrq(System& sys)
+  {
+    if (!sys.irqPin) return;
+
+    // UART・VIAからの割り込み要求
+    bool uart_irq = (sys.uart_status & 0b00001000); // RxReady
+    bool via_irq  = (sys.via.reg_ifr & sys.via.reg_ier & 0x7F);
+
+    if (uart_irq || via_irq) *sys.irqPin = IntRequested;
+    else                     *sys.irqPin = IntCleared;
+  }
+
+  // ノンマスカブル割り込み操作
+  void RequestNmi(System& sys) { if (sys.nmiPin) *sys.nmiPin = IntRequested; }
+  void ClearNmi(System& sys) { if (sys.nmiPin) *sys.nmiPin = IntCleared; }
+
   // ROMロード
-  bool LoadRom(FxtSystem& sys, const std::string& filename)
+  bool LoadRom(System& sys, const std::string& filename)
   {
     FILE* fp = fopen(filename.c_str(), "rb");
     if (!fp) return false;
@@ -50,17 +66,17 @@ namespace Fxt
   }
 
   // システム初期化
-  void Init(FxtSystem& sys)
+  void Init(System& sys)
   {
-    FxtSystem::s_instance = &sys;
-    sys.cpu = vrEmu6502New(CPU_W65C02, FxtSystem::BridgeRead, FxtSystem::BridgeWrite);
+    System::s_instance = &sys;
+    sys.cpu = vrEmu6502New(CPU_W65C02, System::BridgeRead, System::BridgeWrite);
     vrEmu6502Reset(sys.cpu);
     sys.irqPin = vrEmu6502Int(sys.cpu);
     sys.nmiPin = vrEmu6502Nmi(sys.cpu);
   }
 
   // バス読み込み
-  uint8_t BusRead(FxtSystem& sys, uint16_t addr)
+  uint8_t BusRead(System& sys, uint16_t addr)
   {
     // RAM
     if (addr < 0x8000) return sys.ram[addr];
@@ -68,17 +84,18 @@ namespace Fxt
     if (addr >= 0xE000)
     {
       // I/O
-      // --- VIA IFR
-      if (addr == 0xE20D) return 0xFF;
       // --- UART RX
       if (addr == 0xE000)
       {
         if (sys.irqPin) *sys.irqPin = IntCleared;
         sys.uart_status &= 0b11110111;
+        UpdateIrq(sys);
         return sys.uart_input_buffer;
       }
       // --- UART STATUS
       if (addr == 0xE001) return sys.uart_status;
+      // --- VIA
+      if (addr >= 0xE200 && addr <= 0xE20F) return Via::Read(sys, addr);
       // ROM
       if (addr >= 0xF000) return sys.rom[addr & 0x0FFF];
     }
@@ -86,18 +103,17 @@ namespace Fxt
   }
 
   // バス書き込み
-  void BusWrite(FxtSystem& sys, uint16_t addr, uint8_t val)
+  void BusWrite(System& sys, uint16_t addr, uint8_t val)
   {
+    // RAM
     if (addr < 0x8000) sys.ram[addr] = val;
+    // UART
     if (addr == 0xE000) putchar(val);
+    // VIA
+    if (addr >= 0xE200 && addr <= 0xE20F) Via::Write(sys, addr, val);
   }
 
   // 1サイクル実行
-  void Tick(FxtSystem& sys) { if (sys.cpu) vrEmu6502Tick(sys.cpu); }
+  void Tick(System& sys) { if (sys.cpu) vrEmu6502Tick(sys.cpu); }
 
-  // 割り込み操作
-  void RequestIrq(FxtSystem& sys) { if (sys.irqPin) *sys.irqPin = IntRequested; }
-  void ClearIrq(FxtSystem& sys) { if (sys.irqPin) *sys.irqPin = IntCleared; }
-  void RequestNmi(FxtSystem& sys) { if (sys.nmiPin) *sys.nmiPin = IntRequested; }
-  void ClearNmi(FxtSystem& sys) { if (sys.nmiPin) *sys.nmiPin = IntCleared; }
 }

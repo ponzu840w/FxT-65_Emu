@@ -27,3 +27,4 @@ target
 fxt65
 *.o
 obj/
+*.img

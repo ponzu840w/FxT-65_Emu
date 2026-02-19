@@ -7,7 +7,7 @@
 
 // 前方宣言
 void FormatFlags(uint8_t p, char* buf);
-void PrintCpusys(FxtSystem& sys);
+void PrintCpusys(Fxt::System& sys);
 
 // 実行継続フラグ
 volatile sig_atomic_t g_running = 1;
@@ -47,12 +47,18 @@ struct TerminalSession
 int main()
 {
   // システムを生成
-  FxtSystem sys;
+  Fxt::System sys;
 
   // ROMロード
   if (!Fxt::LoadRom(sys, "assets/rom.bin"))
   {
     fprintf(stderr, "Error: ROM読み込みに失敗\n");
+    return 1;
+  }
+
+  // SDカードイメージをマウント
+  if (!Fxt::Sd::MountImg(sys, "sdcard.img")) {
+    fprintf(stderr, "Error: SDカードイメージ読み込みに失敗\n");
     return 1;
   }
 
@@ -70,12 +76,22 @@ int main()
     Fxt::Tick(sys);
   }
 
-  // NMI割り込みでsdmon起動
-  Fxt::RequestNmi(sys);
-  for(int i=0; i<10; i++) Fxt::Tick(sys);
-  Fxt::ClearNmi(sys);
+  /*
+  // BCOSをRAMにロード
+  FILE* fp = fopen("assets/MIRACOS_SDC/BCOS.SYS", "rb");
+  if (!fp) return 1;
+  fseek(fp, 0, SEEK_END);
+  long size = ftell(fp);
+  rewind(fp);
+  fread(sys.ram.data()+0x5300, 1, size, fp);
+  fclose(fp);
 
-  // sdmon実行ループ
+  // BCOS冒頭に飛ぶ
+  VrEmu6502* cpu = sys.cpu;
+  vrEmu6502SetPC(cpu, 0x5300);
+  */
+
+  // 実行ループ
   while(g_running)
   {
     //PrintCpusys(sys);
@@ -86,7 +102,15 @@ int main()
     {
       sys.uart_input_buffer = (uint8_t)ch;
       sys.uart_status |= 0b00001000;
-      Fxt::RequestIrq(sys);
+      Fxt::UpdateIrq(sys);
+
+      if (ch == 'N'-0x40) // CTRL+N
+      {
+        // NMI割り込みでsdmon起動
+        Fxt::RequestNmi(sys);
+        for(int i=0; i<10; i++) Fxt::Tick(sys);
+        Fxt::ClearNmi(sys);
+      }
     }
 
     Fxt::Tick(sys);
@@ -107,7 +131,7 @@ void FormatFlags(uint8_t p, char* buf)
 }
 
 // デバッグ表示
-void PrintCpusys(FxtSystem& sys)
+void PrintCpusys(Fxt::System& sys)
 {
   VrEmu6502* cpu = sys.cpu;
   uint16_t pc = vrEmu6502GetPC(cpu);
