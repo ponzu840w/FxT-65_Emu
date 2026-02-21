@@ -2,6 +2,7 @@
 #include "Via.hpp"
 #include "FxtSystem.hpp"
 #include "Sd.hpp"
+#include "Ps2.hpp"
 
 namespace Fxt
 {
@@ -88,7 +89,17 @@ namespace Via
     uint8_t reg = addr & 0x0F;
     switch (reg)
     {
-      case Reg::ORB: return sys.via.reg_orb;
+      case Reg::ORB:
+        {
+          // 出力ピン: reg_orb の値、入力ピン: PS/2ライン状態
+          // (PS/2ピン以外の入力ビットはプルアップ=1とする)
+          uint8_t ps2_bits = Ps2::GetPortBBits(sys.ps2);
+          uint8_t input_mask = ~sys.via.reg_ddrb & Ps2::PS2_MASK;
+          uint8_t result     = sys.via.reg_orb;
+          result &= ~input_mask;
+          result |= ps2_bits & input_mask;
+          return result;
+        }
       case Reg::DDRB:return sys.via.reg_ddrb;
       case Reg::ACR: return sys.via.reg_acr;
       case Reg::PCR: return sys.via.reg_pcr;

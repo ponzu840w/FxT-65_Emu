@@ -8,6 +8,7 @@
 #include "Via.hpp"
 #include "Sd.hpp"
 #include "Chdz.hpp"
+#include "Ps2.hpp"
 
 extern "C"
 {
@@ -47,6 +48,9 @@ namespace Fxt
 
     // Chiina-Dazzler CRTC
     Chdz::State chdz;
+
+    // PS/2キーボード
+    Ps2::State ps2;
 
     // コンストラクタ
     System();

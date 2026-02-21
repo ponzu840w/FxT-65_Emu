@@ -10,26 +10,25 @@
 
 #include "FxtSystem.hpp"
 #include "Chdz.hpp"
+#include "Ps2.hpp"
 
-#include <unistd.h>
-#include <termios.h>
-#include <fcntl.h>
-#include <signal.h>
 #include <cstdio>
+#include <algorithm> // std::min
 
 // ---------------------------------------------------------------
 //  定数
 // ---------------------------------------------------------------
-static constexpr int DISPLAY_W    = 256;    // 論理サイズ
-static constexpr int DISPLAY_H    = 768;
-static constexpr int WINDOW_W     = 1024;   // 表示サイズ
-static constexpr int WINDOW_H     = 768;
+static constexpr int   DISPLAY_W    = 256;    // 論理サイズ
+static constexpr int   DISPLAY_H    = 768;
+static constexpr int   WINDOW_W     = 1024;   // 表示サイズ
+static constexpr int   WINDOW_H     = 768;
+static constexpr float PADDING_PX   = 20.0f; // ウィンドウ内の余白 [px]
 
 // 1フレームあたりのCPUサイクル数
-static constexpr int TICKS_PER_FRAME = 200000;
+static constexpr int TICKS_PER_FRAME = 2000000;
 
 // ---------------------------------------------------------------
-//  グローバル変数
+//  グローバル状態
 // ---------------------------------------------------------------
 // FxT-65システム
 static Fxt::System  g_sys;
@@ -43,48 +42,44 @@ static sg_pass_action g_pass_action;  // レンダーパス開始時の動作
 // 描画用バッファ CRTCエミュレータに書き込まれ、sokolが参照
 static uint8_t      g_pixels[DISPLAY_W * DISPLAY_H * 4];
 
-// 端末ノンブロッキング入力管理
-struct TerminalSession
+// アスペクト比維持用ユニフォーム
+struct Uniforms { float scale_x; float scale_y; };
+static Uniforms g_uniforms;
+
+// ---------------------------------------------------------------
+//  アスペクト比計算
+//  ウィンドウサイズから PADDING を引いた領域に収まるスケールを求め、
+//  NDC スケール値を更新する (中央配置)
+// ---------------------------------------------------------------
+static void update_uniforms(float win_w, float win_h)
 {
-  struct termios oldt;
-  int oldf;
-  bool active = false;
+  float avail_w = win_w - 2.0f * PADDING_PX;
+  float avail_h = win_h - 2.0f * PADDING_PX;
+  if (avail_w < 1.0f) avail_w = 1.0f;
+  if (avail_h < 1.0f) avail_h = 1.0f;
 
-  TerminalSession()
-  {
-    if (tcgetattr(STDIN_FILENO, &oldt) != 0) return;
-    struct termios newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
-    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
-    active = true;
-  }
-
-  ~TerminalSession()
-  {
-    if (active)
-    {
-      tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-      fcntl(STDIN_FILENO, F_SETFL, oldf);
-    }
-  }
-};
-static TerminalSession* g_term = nullptr;
+  float scale = std::min(avail_w / DISPLAY_W, avail_h / DISPLAY_H);
+  g_uniforms.scale_x = (scale * DISPLAY_W) / win_w;
+  g_uniforms.scale_y = (scale * DISPLAY_H) / win_h;
+}
 
 // ---------------------------------------------------------------
 //  シェーダーソース (Metal)
-//  フルスクリーンクワッドを描くシンプルなシェーダー
+//  vertex_id から NDC を生成し、scale_x/y でアスペクト比を維持して中央配置
 // ---------------------------------------------------------------
 static const char* vs_src =
   "#include <metal_stdlib>\n"
   "using namespace metal;\n"
   "struct vs_out { float4 pos [[position]]; float2 uv; };\n"
-  "vertex vs_out _main(uint vid [[vertex_id]]) {\n"
+  "struct Uniforms { float scale_x; float scale_y; };\n"
+  "vertex vs_out _main(uint vid [[vertex_id]],\n"
+  "    constant Uniforms& u [[buffer(0)]]) {\n"
   "  vs_out o;\n"
-  "  float2 pos = float2((vid & 1) ? 1.0 : -1.0, (vid & 2) ? -1.0 : 1.0);\n"
-  "  o.pos = float4(pos, 0.0, 1.0);\n"
-  "  o.uv  = float2((vid & 1) ? 1.0 : 0.0, (vid & 2) ? 1.0 : 0.0);\n"
+  "  float2 ndc = float2((vid & 1) ? 1.0 : -1.0,\n"
+  "                      (vid & 2) ? -1.0 : 1.0);\n"
+  "  o.pos = float4(ndc * float2(u.scale_x, u.scale_y), 0.0, 1.0);\n"
+  "  o.uv  = float2((vid & 1) ? 1.0 : 0.0,\n"
+  "                 (vid & 2) ? 1.0 : 0.0);\n"
   "  return o;\n"
   "}\n";
 
@@ -99,7 +94,7 @@ static const char* fs_src =
   "}\n";
 
 // ---------------------------------------------------------------
-//  init_cb 最初に一回呼ばれる
+//  init_cb
 // ---------------------------------------------------------------
 static void init_cb(void)
 {
@@ -125,20 +120,20 @@ static void init_cb(void)
     return;
   }
 
-  // 端末ノンブロッキング入力設定
-  g_term = new TerminalSession();
-
   // エミュレータ初期化
   Fxt::Init(g_sys);
+
+  // 初期ウィンドウサイズでアスペクト比を計算
+  update_uniforms((float)sapp_width(), (float)sapp_height());
 
   // テクスチャ作成 (256×768 RGBA8888, stream_update)
   {
     sg_image_desc img_desc = {}; // 記述構造体
-    img_desc.width  = DISPLAY_W;
-    img_desc.height = DISPLAY_H;
+    img_desc.width        = DISPLAY_W;
+    img_desc.height       = DISPLAY_H;
     img_desc.pixel_format = SG_PIXELFORMAT_RGBA8;
     img_desc.usage.stream_update = true;
-    img_desc.label = "chdz-framebuffer";
+    img_desc.label        = "chdz-framebuffer";
     g_image = sg_make_image(&img_desc);
   }
 
@@ -146,7 +141,7 @@ static void init_cb(void)
   {
     sg_view_desc vd = {};
     vd.texture.image = g_image;
-    vd.label = "chdz-view";
+    vd.label         = "chdz-view";
     g_view = sg_make_view(&vd);
   }
 
@@ -155,7 +150,7 @@ static void init_cb(void)
     sg_sampler_desc smp_desc = {};
     smp_desc.min_filter = SG_FILTER_NEAREST;
     smp_desc.mag_filter = SG_FILTER_NEAREST;
-    smp_desc.label = "chdz-sampler";
+    smp_desc.label      = "chdz-sampler";
     g_sampler = sg_make_sampler(&smp_desc);
   }
 
@@ -167,9 +162,14 @@ static void init_cb(void)
     shd_desc.vertex_func.entry    = "_main";
     shd_desc.fragment_func.source = fs_src;
     shd_desc.fragment_func.entry  = "_main";
+    // 頂点シェーダーのユニフォームブロック slot 0 (アスペクト比スケール)
+    shd_desc.uniform_blocks[0].stage        = SG_SHADERSTAGE_VERTEX;
+    shd_desc.uniform_blocks[0].size         = sizeof(Uniforms);
+    shd_desc.uniform_blocks[0].layout       = SG_UNIFORMLAYOUT_NATIVE;
+    shd_desc.uniform_blocks[0].msl_buffer_n = 0; // [[buffer(0)]]
     // フラグメントシェーダーのテクスチャビュー宣言 (slot 0)
-    shd_desc.views[0].texture.stage      = SG_SHADERSTAGE_FRAGMENT;
-    shd_desc.views[0].texture.image_type = SG_IMAGETYPE_2D;
+    shd_desc.views[0].texture.stage       = SG_SHADERSTAGE_FRAGMENT;
+    shd_desc.views[0].texture.image_type  = SG_IMAGETYPE_2D;
     shd_desc.views[0].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
     // フラグメントシェーダーのサンプラー宣言 (slot 0)
     shd_desc.samplers[0].stage        = SG_SHADERSTAGE_FRAGMENT;
@@ -185,9 +185,9 @@ static void init_cb(void)
   // パイプライン作成 (頂点バッファなし、シェーダー内で位置生成)
   {
     sg_pipeline_desc pip_desc = {};
-    pip_desc.shader = shd;
+    pip_desc.shader         = shd;
     pip_desc.primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP;
-    pip_desc.label = "chdz-pipeline";
+    pip_desc.label          = "chdz-pipeline";
     g_pip = sg_make_pipeline(&pip_desc);
   }
 
@@ -203,36 +203,11 @@ static void init_cb(void)
 // ---------------------------------------------------------------
 //  frame_cb  フレームごとに呼ばれる
 // ---------------------------------------------------------------
-static int g_input_cnt = 0;
-
 static void frame_cb(void)
 {
-  // 入力処理 (4096サイクルに1回)
-  g_input_cnt += TICKS_PER_FRAME;
-  if (g_input_cnt >= 4096)
-  {
-    g_input_cnt -= 4096;
-    int ch = getchar();
-    if (ch != EOF)
-    {
-      g_sys.uart_input_buffer = (uint8_t)ch;
-      g_sys.uart_status |= 0b00001000;
-      Fxt::UpdateIrq(g_sys);
-
-      if (ch == 'N' - 0x40) // Ctrl+N: NMI
-      {
-        Fxt::RequestNmi(g_sys);
-        for (int i = 0; i < 10; i++) Fxt::Tick(g_sys);
-        Fxt::ClearNmi(g_sys);
-      }
-    }
-  }
-
-  // エミュレーション実行
+  // エミュレーション実行 (PS/2 Tick は FxtSystem::Tick 内で呼ばれる)
   for (int i = 0; i < TICKS_PER_FRAME; i++)
-  {
     Fxt::Tick(g_sys);
-  }
 
   // フレームバッファレンダリング
   Chdz::RenderFrame(g_sys.chdz, g_pixels);
@@ -247,11 +222,13 @@ static void frame_cb(void)
 
   // フルスクリーンクワッド描画
   sg_pass pass = {};
-  pass.action = g_pass_action;
+  pass.action    = g_pass_action;
   pass.swapchain = sglue_swapchain();
   sg_begin_pass(&pass);
   sg_apply_pipeline(g_pip);
   sg_apply_bindings(&g_bind);
+  sg_range uni_range = SG_RANGE(g_uniforms);
+  sg_apply_uniforms(0, &uni_range);
   sg_draw(0, 4, 1);
   sg_end_pass();
   sg_commit();
@@ -262,38 +239,23 @@ static void frame_cb(void)
 // ---------------------------------------------------------------
 static void event_cb(const sapp_event* ev)
 {
-  // キー押下処理
-  if (ev->type == SAPP_EVENTTYPE_KEY_DOWN)
+  switch (ev->type)
   {
-    // 印字可能文字の変換
-    int ch = -1;
-    if (ev->key_code == SAPP_KEYCODE_ENTER)          ch = 0x0A;
-    else if (ev->key_code == SAPP_KEYCODE_BACKSPACE) ch = 0x08;
-    else if (ev->key_code == SAPP_KEYCODE_ESCAPE)    ch = 0x1B;
-    else if (ev->key_code == SAPP_KEYCODE_SPACE)     ch = ' ';
-    else if (ev->key_code >= SAPP_KEYCODE_SPACE && ev->key_code <= SAPP_KEYCODE_Z)
-    {
-      ch = (int)ev->key_code;
-      if (!(ev->modifiers & SAPP_MODIFIER_SHIFT))
-        ch = ch + ('a' - 'A');
-    }
+    case SAPP_EVENTTYPE_KEY_DOWN:
+      Ps2::KeyDown(g_sys.ps2, (int)ev->key_code);
+      break;
 
-    if (ch >= 0)
-    {
-      if (ev->modifiers & SAPP_MODIFIER_CTRL)
-        ch &= 0x1F;
+    case SAPP_EVENTTYPE_KEY_UP:
+      Ps2::KeyUp(g_sys.ps2, (int)ev->key_code);
+      break;
 
-      g_sys.uart_input_buffer = (uint8_t)ch;
-      g_sys.uart_status |= 0b00001000;
-      Fxt::UpdateIrq(g_sys);
+    case SAPP_EVENTTYPE_RESIZED:
+      update_uniforms((float)ev->framebuffer_width,
+                      (float)ev->framebuffer_height);
+      break;
 
-      if (ch == 'N' - 0x40) // Ctrl+N: NMI
-      {
-        Fxt::RequestNmi(g_sys);
-        for (int i = 0; i < 10; i++) Fxt::Tick(g_sys);
-        Fxt::ClearNmi(g_sys);
-      }
-    }
+    default:
+      break;
   }
 }
 
@@ -304,8 +266,6 @@ static void cleanup_cb(void)
 {
   sg_shutdown();
   Fxt::Sd::UnmountImg(g_sys);
-  delete g_term;
-  g_term = nullptr;
 }
 
 // ---------------------------------------------------------------
@@ -315,12 +275,12 @@ sapp_desc sokol_main(int argc, char* argv[])
 {
   (void)argc; (void)argv;
   sapp_desc desc = {};
-  desc.init_cb    = init_cb;
-  desc.frame_cb   = frame_cb;
-  desc.event_cb   = event_cb;
-  desc.cleanup_cb = cleanup_cb;
-  desc.width      = WINDOW_W;
-  desc.height     = WINDOW_H;
+  desc.init_cb      = init_cb;
+  desc.frame_cb     = frame_cb;
+  desc.event_cb     = event_cb;
+  desc.cleanup_cb   = cleanup_cb;
+  desc.width        = WINDOW_W;
+  desc.height       = WINDOW_H;
   desc.window_title = "FxT-65 Emulator";
   desc.logger.func  = slog_func;
   return desc;  // sokol appの記述子を返す

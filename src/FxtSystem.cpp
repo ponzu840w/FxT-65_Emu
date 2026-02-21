@@ -1,5 +1,6 @@
 /* src/FxtSystem.cpp */
 #include "FxtSystem.hpp"
+#include "Ps2.hpp"
 #include <cstdio>
 
 namespace Fxt
@@ -114,6 +115,7 @@ namespace Fxt
   {
     vrEmu6502Tick(sys.cpu);
     Via::Tick(sys);
+    Ps2::Tick(sys);
   }
 
 }
