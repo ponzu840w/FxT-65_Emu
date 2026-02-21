@@ -105,6 +105,8 @@ namespace Fxt
     if (addr == 0xE000) putchar(val);
     // VIA
     if (addr >= 0xE200 && addr <= 0xE20F) Via::Write(sys, addr, val);
+    // Chiina-Dazzler CRTC
+    if (addr >= 0xE600 && addr <= 0xE607) Chdz::Write(sys.chdz, addr, val);
   }
 
   // 1サイクル実行

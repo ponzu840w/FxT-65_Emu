@@ -28,3 +28,5 @@ fxt65
 *.o
 obj/
 *.img
+tmp_doc/
+tags

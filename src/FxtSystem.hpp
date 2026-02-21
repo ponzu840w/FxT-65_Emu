@@ -7,6 +7,7 @@
 
 #include "Via.hpp"
 #include "Sd.hpp"
+#include "Chdz.hpp"
 
 extern "C"
 {
@@ -44,8 +45,12 @@ namespace Fxt
     // SDカード
     Sd::State sd;
 
-    // コンストラクタ デストラクタ
+    // Chiina-Dazzler CRTC
+    Chdz::State chdz;
+
+    // コンストラクタ
     System();
+    // デストラクタ
     ~System();
   };
 
