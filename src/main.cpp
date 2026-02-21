@@ -13,6 +13,10 @@
 #include "Ps2.hpp"
 
 #include <cstdio>
+#include <unistd.h>
+#include <termios.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <algorithm> // std::min
 
 // ---------------------------------------------------------------
@@ -25,7 +29,7 @@ static constexpr int   WINDOW_H     = 768;
 static constexpr float PADDING_PX   = 20.0f; // ウィンドウ内の余白 [px]
 
 // 1フレームあたりのCPUサイクル数
-static constexpr int TICKS_PER_FRAME = 2000000;
+static constexpr int TICKS_PER_FRAME = 200000;
 
 // ---------------------------------------------------------------
 //  グローバル状態
@@ -66,6 +70,35 @@ static void update_uniforms(float win_w, float win_h)
   g_uniforms.scale_x = (scale * asp_w) / win_w;
   g_uniforms.scale_y = (scale * asp_h) / win_h;
 }
+
+// 端末ノンブロッキング入力管理
+struct TerminalSession
+{
+  struct termios oldt;
+  int oldf;
+  bool active = false;
+
+  TerminalSession()
+  {
+    if (tcgetattr(STDIN_FILENO, &oldt) != 0) return;
+    struct termios newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+    active = true;
+  }
+
+  ~TerminalSession()
+  {
+    if (active)
+    {
+      tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+      fcntl(STDIN_FILENO, F_SETFL, oldf);
+    }
+  }
+};
+static TerminalSession* g_term = nullptr;
 
 // ---------------------------------------------------------------
 //  シェーダーソース (Metal)
@@ -123,6 +156,9 @@ static void init_cb(void)
     sapp_quit();
     return;
   }
+
+  // 端末ノンブロッキング入力設定
+  g_term = new TerminalSession();
 
   // エミュレータ初期化
   Fxt::Init(g_sys);
@@ -207,8 +243,31 @@ static void init_cb(void)
 // ---------------------------------------------------------------
 //  frame_cb  フレームごとに呼ばれる
 // ---------------------------------------------------------------
+static int g_input_cnt = 0;
+
 static void frame_cb(void)
 {
+  // 標準入力処理 (4096サイクルに1回)
+  g_input_cnt += TICKS_PER_FRAME;
+  if (g_input_cnt >= 4096)
+  {
+    g_input_cnt = 0;
+    int ch = getchar();
+    if (ch != EOF)
+    {
+      g_sys.uart_input_buffer = (uint8_t)ch;
+      g_sys.uart_status |= 0b00001000;
+      Fxt::UpdateIrq(g_sys);
+
+      if (ch == 'N' - 0x40) // Ctrl+N: NMI
+      {
+        Fxt::RequestNmi(g_sys);
+        for (int i = 0; i < 10; i++) Fxt::Tick(g_sys);
+        Fxt::ClearNmi(g_sys);
+      }
+    }
+  }
+
   // エミュレーション実行 (PS/2 Tick は FxtSystem::Tick 内で呼ばれる)
   for (int i = 0; i < TICKS_PER_FRAME; i++)
     Fxt::Tick(g_sys);
@@ -243,14 +302,53 @@ static void frame_cb(void)
 // ---------------------------------------------------------------
 static void event_cb(const sapp_event* ev)
 {
+  static bool keyin_to_uart = false;
   switch (ev->type)
   {
+    // キーボード押下
     case SAPP_EVENTTYPE_KEY_DOWN:
-      Ps2::KeyDown(g_sys.ps2, (int)ev->key_code);
+      // UARTとして入力
+      if (keyin_to_uart)
+      {
+        // 印字可能文字の変換
+        int ch = -1;
+        if (ev->key_code == SAPP_KEYCODE_ENTER)          ch = 0x0A;
+        else if (ev->key_code == SAPP_KEYCODE_BACKSPACE) ch = 0x08;
+        else if (ev->key_code == SAPP_KEYCODE_ESCAPE)    ch = 0x1B;
+        else if (ev->key_code == SAPP_KEYCODE_SPACE)     ch = ' ';
+        else if (ev->key_code >= SAPP_KEYCODE_SPACE && ev->key_code <= SAPP_KEYCODE_Z)
+        {
+          ch = (int)ev->key_code;
+          if (!(ev->modifiers & SAPP_MODIFIER_SHIFT))
+            ch = ch + ('a' - 'A');
+        }
+
+        if (ch >= 0)
+        {
+          if (ev->modifiers & SAPP_MODIFIER_CTRL)
+            ch &= 0x1F;
+
+          g_sys.uart_input_buffer = (uint8_t)ch;
+          g_sys.uart_status |= 0b00001000;
+          Fxt::UpdateIrq(g_sys);
+
+          if (ch == 'N' - 0x40) // Ctrl+N: NMI
+          {
+            Fxt::RequestNmi(g_sys);
+            for (int i = 0; i < 10; i++) Fxt::Tick(g_sys);
+            Fxt::ClearNmi(g_sys);
+          }
+        }
+        else
+        {
+          // PS/2キーボードとして入力
+          Ps2::KeyDown(g_sys.ps2, (int)ev->key_code);
+        }
+      }
       break;
 
     case SAPP_EVENTTYPE_KEY_UP:
-      Ps2::KeyUp(g_sys.ps2, (int)ev->key_code);
+      if (!keyin_to_uart) Ps2::KeyUp(g_sys.ps2, (int)ev->key_code);
       break;
 
     case SAPP_EVENTTYPE_RESIZED:
