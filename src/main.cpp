@@ -58,9 +58,13 @@ static void update_uniforms(float win_w, float win_h)
   if (avail_w < 1.0f) avail_w = 1.0f;
   if (avail_h < 1.0f) avail_h = 1.0f;
 
-  float scale = std::min(avail_w / DISPLAY_W, avail_h / DISPLAY_H);
-  g_uniforms.scale_x = (scale * DISPLAY_W) / win_w;
-  g_uniforms.scale_y = (scale * DISPLAY_H) / win_h;
+  // スクリーン上の意図サイズ (論理ピクセルは水平4倍に引き伸ばして表示)
+  // = WINDOW_W × WINDOW_H で定義された 4:3 比率を維持する
+  const float asp_w = (float)WINDOW_W;
+  const float asp_h = (float)WINDOW_H;
+  float scale = std::min(avail_w / asp_w, avail_h / asp_h);
+  g_uniforms.scale_x = (scale * asp_w) / win_w;
+  g_uniforms.scale_y = (scale * asp_h) / win_h;
 }
 
 // ---------------------------------------------------------------
