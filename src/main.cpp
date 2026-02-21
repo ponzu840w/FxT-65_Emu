@@ -255,6 +255,7 @@ static void frame_cb(void)
     int ch = getchar();
     if (ch != EOF)
     {
+      if (ch == 0x7F) ch = 0x08; // DEL to BS
       g_sys.uart_input_buffer = (uint8_t)ch;
       g_sys.uart_status |= 0b00001000;
       Fxt::UpdateIrq(g_sys);
