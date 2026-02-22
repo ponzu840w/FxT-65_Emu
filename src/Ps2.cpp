@@ -9,7 +9,7 @@
 #include "FxtSystem.hpp"
 #include "Via.hpp"
 
-#define PS2_DEBUG 1
+//#define PS2_DEBUG 1
 #if PS2_DEBUG
 #include <cstdio>
 #define PS2_LOG(...) fprintf(stderr, "[PS2] " __VA_ARGS__)
@@ -208,6 +208,15 @@ void Tick(Fxt::System& sys)
   {
     if (host_clk_low) // ホストがクロックをLow: Inhibit
     {
+#if PS2_DEBUG
+      if (ps2.q_head != ps2.q_tail) {
+        static int inhibit_cnt = 0;
+        if (++inhibit_cnt % 50000 == 0)
+          PS2_LOG("STALL: Inhibit継続中 queue=%d tx_delay=%d DDRB=%02X ORB=%02X\n",
+                  (ps2.q_tail - ps2.q_head + QUEUE_SIZE) % QUEUE_SIZE,
+                  ps2.tx_delay_cnt, via.reg_ddrb, via.reg_orb);
+      }
+#endif
       ps2.clk = true;
       ps2.dat = true;
       ps2.tx_delay_cnt = 400;

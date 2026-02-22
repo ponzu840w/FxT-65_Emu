@@ -52,6 +52,11 @@ namespace Fxt
     // PS/2キーボード
     Ps2::State ps2;
 
+    // VBLANK (VIA CA2) 生成用カウンタ
+    // 8MHz / 60Hz ≈ 133333 サイクルごとに CA2 パルスを発生
+    static constexpr int VBLANK_PERIOD = 133333;
+    int vblank_cnt = 0;
+
     // コンストラクタ
     System();
     // デストラクタ
