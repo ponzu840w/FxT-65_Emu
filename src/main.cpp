@@ -367,10 +367,27 @@ static void event_cb(const sapp_event* ev)
 }
 
 // ---------------------------------------------------------------
+//  端末復元 (cleanup_cb・シグナルハンドラ共通)
+// ---------------------------------------------------------------
+static void restore_terminal(void)
+{
+  if (g_term) { delete g_term; g_term = nullptr; }
+}
+
+// SIGINT/SIGTERM ハンドラ: 端末を復元してデフォルト動作に戻す
+static void signal_cleanup(int sig)
+{
+  restore_terminal();
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+
+// ---------------------------------------------------------------
 //  cleanup_cb 最後に一回呼ばれる
 // ---------------------------------------------------------------
 static void cleanup_cb(void)
 {
+  restore_terminal();
   sg_shutdown();
   sargs_shutdown();
   Fxt::Sd::UnmountImg(g_sys);
@@ -381,6 +398,10 @@ static void cleanup_cb(void)
 // ---------------------------------------------------------------
 sapp_desc sokol_main(int argc, char* argv[])
 {
+  // SIGINT/SIGTERM で端末状態を復元する
+  signal(SIGINT,  signal_cleanup);
+  signal(SIGTERM, signal_cleanup);
+
   // コマンドライン引数パース
   sargs_desc sargs_d = {};
   sargs_d.argc = argc;
