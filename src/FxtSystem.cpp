@@ -118,7 +118,7 @@ namespace Fxt
     Ps2::Tick(sys);
 
     // VBLANK (VIA CA2 立ち下がりエッジ) 生成
-    if (++sys.vblank_cnt >= System::VBLANK_PERIOD)
+    if (++sys.vblank_cnt >= sys.cfg.vblank_period())
     {
       sys.vblank_cnt = 0;
       // PCR bits[3:1] = 001 の場合のみ CA2 を立ち下がりエッジ割り込みとして扱う

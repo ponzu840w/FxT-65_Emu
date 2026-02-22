@@ -18,6 +18,29 @@ extern "C"
 namespace Fxt
 {
 
+  struct EmulatorConfig
+  {
+    // エミュレータ速度設定
+    // 可変速度
+    int   cpu_hz    = 8000000;  // CPU周波数 8MHz
+    float sim_speed = 1.0f;     // シミュレーション速度倍率（1.0 = 等倍）
+
+    // 固定速度
+    static constexpr int VBLANK_HZ  = 60;    // CRTCが生成するVBLANK周波数
+    static constexpr int PS2_CLK_HZ = 12000; // PS/2バスクロック (~12kHz)
+    static constexpr int HOST_FPS   = 60;     // Sokolフレームレート
+
+    // VBLANK周期 [CPUサイクル]
+    int vblank_period()   const { return cpu_hz / VBLANK_HZ; }
+    // PS/2クロック半周期 [CPUサイクル]
+    int ps2_half_period() const { return cpu_hz / PS2_CLK_HZ / 2; }
+    // 1フレームあたりのCPUサイクル数
+    int ticks_per_frame() const
+    {
+      return (int)((double)cpu_hz * sim_speed / HOST_FPS);
+    }
+  };
+
   struct System
   {
     // インスタンスのポインタ
@@ -52,9 +75,10 @@ namespace Fxt
     // PS/2キーボード
     Ps2::State ps2;
 
+    // エミュレータ設定
+    EmulatorConfig cfg;
+
     // VBLANK (VIA CA2) 生成用カウンタ
-    // 8MHz / 60Hz ≈ 133333 サイクルごとに CA2 パルスを発生
-    static constexpr int VBLANK_PERIOD = 133333;
     int vblank_cnt = 0;
 
     // コンストラクタ

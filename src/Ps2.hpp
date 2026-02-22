@@ -14,8 +14,6 @@ namespace Fxt { struct System; }
 
 namespace Ps2
 {
-  // PS/2クロック半周期 [CPUサイクル] (8MHz / 12kHz / 2 ≒ 333)
-  static constexpr int HALF_PERIOD = 333;
   // 送信キューサイズ (複数バイトのシーケンス含む)
   static constexpr int QUEUE_SIZE  = 64;
 

@@ -7,12 +7,14 @@
 #include "lib/sokol/sokol_gfx.h"  // グラフィック
 #include "lib/sokol/sokol_glue.h" // appとgfxのグルー
 #include "lib/sokol/sokol_log.h"  // ロギング
+#include "lib/sokol/sokol_args.h" // コマンドライン引数
 
 #include "FxtSystem.hpp"
 #include "Chdz.hpp"
 #include "Ps2.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <unistd.h>
 #include <termios.h>
 #include <fcntl.h>
@@ -27,9 +29,6 @@ static constexpr int   DISPLAY_H    = 768;
 static constexpr int   WINDOW_W     = 1024;   // 表示サイズ
 static constexpr int   WINDOW_H     = 768;
 static constexpr float PADDING_PX   = 20.0f; // ウィンドウ内の余白 [px]
-
-// 1フレームあたりのCPUサイクル数
-static constexpr int TICKS_PER_FRAME = 200000;
 
 // ---------------------------------------------------------------
 //  グローバル状態
@@ -248,7 +247,7 @@ static int g_input_cnt = 0;
 static void frame_cb(void)
 {
   // 標準入力処理 (4096サイクルに1回)
-  g_input_cnt += TICKS_PER_FRAME;
+  g_input_cnt += g_sys.cfg.ticks_per_frame();
   if (g_input_cnt >= 4096)
   {
     g_input_cnt = 0;
@@ -269,8 +268,8 @@ static void frame_cb(void)
     }
   }
 
-  // エミュレーション実行 (PS/2 Tick は FxtSystem::Tick 内で呼ばれる)
-  for (int i = 0; i < TICKS_PER_FRAME; i++)
+  // エミュレーション実行
+  for (int i = 0; i < g_sys.cfg.ticks_per_frame(); i++)
     Fxt::Tick(g_sys);
 
   // フレームバッファレンダリング
@@ -373,6 +372,7 @@ static void event_cb(const sapp_event* ev)
 static void cleanup_cb(void)
 {
   sg_shutdown();
+  sargs_shutdown();
   Fxt::Sd::UnmountImg(g_sys);
 }
 
@@ -381,7 +381,20 @@ static void cleanup_cb(void)
 // ---------------------------------------------------------------
 sapp_desc sokol_main(int argc, char* argv[])
 {
-  (void)argc; (void)argv;
+  // コマンドライン引数パース
+  sargs_desc sargs_d = {};
+  sargs_d.argc = argc;
+  sargs_d.argv = argv;
+  sargs_setup(&sargs_d);
+
+  // CPU周波数 cpu_hz=8000000
+  if (sargs_exists("cpu_hz"))
+    g_sys.cfg.cpu_hz = atoi(sargs_value("cpu_hz"));
+
+  // シミュレーション速度倍率 speed=1.0
+  if (sargs_exists("speed"))
+    g_sys.cfg.sim_speed = (float)atof(sargs_value("speed"));
+
   sapp_desc desc = {};
   desc.init_cb      = init_cb;
   desc.frame_cb     = frame_cb;

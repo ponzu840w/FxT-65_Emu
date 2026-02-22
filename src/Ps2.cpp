@@ -227,7 +227,7 @@ void Tick(Fxt::System& sys)
       PS2_LOG("Host RTS detected (DAT Low, CLK High). Starting RX phase.\n");
       // 送信要求 (RTS): CLKが解放され、DATがLowになっている
       ps2.phase = Phase::RX_CLK_LOW;
-      ps2.half_period_cnt = HALF_PERIOD;
+      ps2.half_period_cnt = sys.cfg.ps2_half_period();
       ps2.clk = false;
       ps2.dat = true;
       ps2.bit_idx = 0;
@@ -251,7 +251,7 @@ void Tick(Fxt::System& sys)
       ps2.clk = false;
       ps2.dat = false;
       ps2.phase = Phase::TX_CLK_LOW;
-      ps2.half_period_cnt = HALF_PERIOD;
+      ps2.half_period_cnt = sys.cfg.ps2_half_period();
       return;
     }
     return; // アイドル維持
@@ -260,7 +260,7 @@ void Tick(Fxt::System& sys)
   // タイマー進行
   ps2.half_period_cnt--;
   if (ps2.half_period_cnt > 0) return;
-  ps2.half_period_cnt = HALF_PERIOD;
+  ps2.half_period_cnt = sys.cfg.ps2_half_period();
 
   // -------------------------------------------------
   //  送信 (TX: デバイス -> ホスト)
