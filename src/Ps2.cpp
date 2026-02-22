@@ -9,6 +9,14 @@
 #include "FxtSystem.hpp"
 #include "Via.hpp"
 
+#define PS2_DEBUG 1
+#if PS2_DEBUG
+#include <cstdio>
+#define PS2_LOG(...) fprintf(stderr, "[PS2] " __VA_ARGS__)
+#else
+#define PS2_LOG(...)
+#endif
+
 namespace Ps2
 {
 
@@ -149,6 +157,7 @@ static void queue_byte(State& ps2, uint8_t b)
   {
     ps2.queue[ps2.q_tail] = b;
     ps2.q_tail = next;
+    PS2_LOG("Queued TX byte: %02X\n", b);
   }
 }
 
@@ -191,32 +200,52 @@ void Tick(Fxt::System& sys)
   State&            ps2 = sys.ps2;
   const Fxt::Via::State& via = sys.via;
 
-  // ホストがCLKを出力LOWにしていたらデバイス送信禁止 (inhibit)
-  bool inhibited = (via.reg_ddrb & CLK_BIT) && !(via.reg_orb & CLK_BIT);
+  // ホストのライン状態判定
+  bool host_clk_low = (via.reg_ddrb & CLK_BIT) && !(via.reg_orb & CLK_BIT);
+  bool host_dat_low = (via.reg_ddrb & DAT_BIT) && !(via.reg_orb & DAT_BIT);
 
-  if (ps2.phase == TxPhase::IDLE)
+  if (ps2.phase == Phase::IDLE)
   {
-    if (inhibited || ps2.q_head == ps2.q_tail)
+    if (host_clk_low) // ホストがクロックをLow: Inhibit
     {
       ps2.clk = true;
       ps2.dat = true;
+      ps2.tx_delay_cnt = 400;
       return;
     }
-    // 新フレーム開始: バイトをキューから取り出す
-    ps2.current_byte = ps2.queue[ps2.q_head];
-    ps2.q_head = (ps2.q_head + 1) % QUEUE_SIZE;
-    ps2.bit_idx  = 0;
-    // 奇数パリティ: 1ビット数が偶数なら parity_bit=1
-    int ones = 0;
-    for (int i = 0; i < 8; i++) ones += (ps2.current_byte >> i) & 1;
-    ps2.parity_bit = (ones & 1) ? 0 : 1;
+    else if (host_dat_low)
+    {
+      PS2_LOG("Host RTS detected (DAT Low, CLK High). Starting RX phase.\n");
+      // 送信要求 (RTS): CLKが解放され、DATがLowになっている
+      ps2.phase = Phase::RX_CLK_LOW;
+      ps2.half_period_cnt = HALF_PERIOD;
+      ps2.clk = false;
+      ps2.dat = true;
+      ps2.bit_idx = 0;
+      ps2.current_rx_byte = 0;
+      return;
+    }
+    else if (ps2.q_head != ps2.q_tail)
+    {
+      if (ps2.tx_delay_cnt-- > 0) return;
 
-    // スタートビット: CLK=LOW, DAT=LOW
-    ps2.clk = false;
-    ps2.dat = false;
-    ps2.phase           = TxPhase::CLK_LOW;
-    ps2.half_period_cnt = HALF_PERIOD;
-    return;
+      // デバイス送信 (TX) 開始
+      ps2.current_tx_byte = ps2.queue[ps2.q_head];
+      ps2.q_head = (ps2.q_head + 1) % QUEUE_SIZE;
+      PS2_LOG("Starting TX phase for byte: %02X\n", ps2.current_tx_byte);
+      ps2.bit_idx  = 0;
+
+      int ones = 0;
+      for (int i = 0; i < 8; i++) ones += (ps2.current_tx_byte >> i) & 1;
+      ps2.parity_bit = (ones & 1) ? 0 : 1;
+
+      ps2.clk = false;
+      ps2.dat = false;
+      ps2.phase = Phase::TX_CLK_LOW;
+      ps2.half_period_cnt = HALF_PERIOD;
+      return;
+    }
+    return; // アイドル維持
   }
 
   // タイマー進行
@@ -224,44 +253,101 @@ void Tick(Fxt::System& sys)
   if (ps2.half_period_cnt > 0) return;
   ps2.half_period_cnt = HALF_PERIOD;
 
-  if (ps2.phase == TxPhase::CLK_LOW)
+  // -------------------------------------------------
+  //  送信 (TX: デバイス -> ホスト)
+  // -------------------------------------------------
+  if (ps2.phase == Phase::TX_CLK_LOW)
   {
-    // CLK LOW 期間終了 → CLK HIGH へ
-    ps2.clk   = true;
-    ps2.phase = TxPhase::CLK_HIGH;
+    ps2.clk = true;
+    ps2.phase = Phase::TX_CLK_HIGH;
   }
-  else // CLK_HIGH 期間終了 → 次ビットへ
+  else if (ps2.phase == Phase::TX_CLK_HIGH)
   {
     ps2.bit_idx++;
-
-    if (ps2.bit_idx <= 8)
-    {
-      // データビット (LSBファースト)
-      bool bit = (ps2.current_byte >> (ps2.bit_idx - 1)) & 1;
-      ps2.dat  = bit;
-    }
-    else if (ps2.bit_idx == 9)
-    {
-      // パリティビット
+    if (ps2.bit_idx <= 8) {
+      ps2.dat = (ps2.current_tx_byte >> (ps2.bit_idx - 1)) & 1;
+    } else if (ps2.bit_idx == 9) {
       ps2.dat = (ps2.parity_bit != 0);
+    } else if (ps2.bit_idx == 10) {
+      ps2.dat = true; // Stop bit
+    } else {
+      PS2_LOG("TX completed for byte: %02X\n", ps2.current_tx_byte);
+      ps2.phase = Phase::IDLE;
+      ps2.clk = true; ps2.dat = true;
+      return;
     }
-    else if (ps2.bit_idx == 10)
+    ps2.clk = false;
+    ps2.phase = Phase::TX_CLK_LOW;
+  }
+  // -------------------------------------------------
+  //  受信 (RX: ホスト -> デバイス)
+  // -------------------------------------------------
+  else if (ps2.phase == Phase::RX_CLK_LOW)
+  {
+    ps2.clk = true;
+    ps2.phase = Phase::RX_CLK_HIGH;
+  }
+  else if (ps2.phase == Phase::RX_CLK_HIGH)
+  {
+    // クロックがHighの期間の中央でホストの出力をサンプリング
+    bool host_dat = true;
+    if (via.reg_ddrb & DAT_BIT)
+      host_dat = (via.reg_orb & DAT_BIT) != 0;
+
+    if (ps2.bit_idx >= 1 && ps2.bit_idx <= 8)
     {
-      // ストップビット (HIGH=1)
+      if (host_dat) ps2.current_rx_byte |= (1 << (ps2.bit_idx - 1));
+    }
+
+    ps2.bit_idx++;
+
+    if (ps2.bit_idx == 11)
+    {
+      // 11ビット目: ACK出力 (デバイスがDataをLowに引く)
+      ps2.dat = false;
+    }
+    else if (ps2.bit_idx == 12)
+    {
+      PS2_LOG("RX completed. Received byte: %02X (expecting_led: %d)\n", ps2.current_rx_byte, ps2.expecting_led_arg);
+      // 受信完了処理
       ps2.dat = true;
-    }
-    else
-    {
-      // フレーム完了 → IDLE
-      ps2.phase = TxPhase::IDLE;
-      ps2.clk   = true;
-      ps2.dat   = true;
+      ps2.clk = true;
+      ps2.phase = Phase::IDLE;
+      ps2.tx_delay_cnt = 400;
+
+      // コマンドに対する応答をキューに積む
+      if (ps2.expecting_led_arg)
+      {
+        ps2.expecting_led_arg = false;
+        queue_byte(ps2, 0xFA); // ACK
+      }
+      else
+      {
+        switch (ps2.current_rx_byte)
+        {
+          case 0xFF: // Reset
+            queue_byte(ps2, 0xFA); // ACK
+            queue_byte(ps2, 0xAA); // BAT Completion
+            break;
+          case 0xED: // Set LED
+            queue_byte(ps2, 0xFA); // ACK
+            ps2.expecting_led_arg = true;
+            break;
+          case 0xF4: // Enable
+          case 0xF5: // Disable
+            queue_byte(ps2, 0xFA); // ACK
+            break;
+          default:
+            queue_byte(ps2, 0xFA); // 未知のコマンドにも一応ACKを返す
+            break;
+        }
+      }
       return;
     }
 
-    ps2.clk   = false;
-    ps2.phase = TxPhase::CLK_LOW;
+    ps2.clk = false;
+    ps2.phase = Phase::RX_CLK_LOW;
   }
 }
 
-} // namespace Ps2
+}

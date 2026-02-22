@@ -1,10 +1,10 @@
 /* src/Ps2.hpp - PS/2キーボードエミュレータ
  *
- * VIA Port B ピン配置 (FXT65.inc 準拠):
+ * VIA Port B ピン配置 FXT65.inc:
  *   bit 5 (0x20): PS2_CLK
  *   bit 4 (0x10): PS2_DAT
  *
- * PS/2 Set 2 スキャンコード, デバイス→ホスト送信のみ実装。
+ *
  * クロック周波数: HALF_PERIOD サイクルごとにCLK反転 (~12kHz at 8MHz CPU)
  */
 #pragma once
@@ -24,7 +24,7 @@ namespace Ps2
   static constexpr uint8_t DAT_BIT = 0x10; // bit 4
   static constexpr uint8_t PS2_MASK = CLK_BIT | DAT_BIT;
 
-  enum class TxPhase { IDLE, CLK_LOW, CLK_HIGH };
+  enum class Phase { IDLE, TX_CLK_LOW, TX_CLK_HIGH, RX_CLK_LOW, RX_CLK_HIGH };
 
   struct State
   {
@@ -34,11 +34,15 @@ namespace Ps2
     int     q_tail = 0;
 
     // 送信ステートマシン
-    TxPhase phase            = TxPhase::IDLE;
+    Phase phase            = Phase::IDLE;
     int     half_period_cnt  = 0;
-    uint8_t current_byte     = 0;
+
+    uint8_t current_tx_byte  = 0;
+    uint8_t current_rx_byte  = 0;
     int     bit_idx          = 0; // 0=スタートビット, 1-8=データ, 9=パリティ, 10=ストップ
     int     parity_bit       = 0; // 奇数パリティビット値
+    bool    expecting_led_arg = false;
+    int     tx_delay_cnt     = 0;
 
     // 現在のライン状態 (VIA Port B の入力として見える)
     bool clk = true;  // アイドル時はHIGH

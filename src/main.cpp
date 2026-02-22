@@ -342,9 +342,14 @@ static void event_cb(const sapp_event* ev)
         }
         else
         {
-          // PS/2キーボードとして入力
+          // 特殊キーをPS/2キーボードとして入力
           Ps2::KeyDown(g_sys.ps2, (int)ev->key_code);
         }
+      }
+      else
+      {
+        // PS/2キーボードとして入力
+        Ps2::KeyDown(g_sys.ps2, (int)ev->key_code);
       }
       break;
 
