@@ -78,12 +78,14 @@ namespace Sd
       fprintf(stderr, "[SD] SetCs=%d\n", active);
     #endif
     sys.sd.cs_active = active;
+    /* sd-monitorおよびMIRACOSは、コマンドシーケンス中に非アクティブになっても動き続けるSDカードの未定義動作に依存している可能性がある
     // 非アクティブ状態ならIDLE
     if (!active)
     {
-      //sys.sd.phase = State::IDLE;
-      //sys.sd.cmd_idx = 0;
+      sys.sd.phase = State::IDLE;
+      sys.sd.cmd_idx = 0;
     }
+    */
   }
 
   // 1バイトデータ送受
@@ -190,7 +192,7 @@ namespace Sd
             fprintf(stderr, "\n");
           #endif
 
-          if (sd.phase != State::WAIT_RESPONSE) sd.phase = State::WAIT_RESPONSE;
+          sd.phase = State::WAIT_RESPONSE;
           return 0xFF;
 
           PREPARE_READ:
@@ -275,6 +277,7 @@ namespace Sd
           }
           return d;
         }
+      /* セクタデータ転送後のダミーCRCチェックがあるはずなのだが、MIRACOSはそれを想定していない？
       case State::READ_SEND_CRC:
         #ifdef DEBUG_SD
           fprintf(stderr, "[SD] READ_SEND_CRC\n");
@@ -282,6 +285,7 @@ namespace Sd
         sd.data_idx++;
         if (sd.data_idx >= 2) sd.phase = State::IDLE;
         return 0xFF;
+      */
       case State::WRITE_WAIT_TOKEN:
         #ifdef DEBUG_SD
           fprintf(stderr, "[SD] WRITE_WAIT_TOKEN\n");

@@ -105,7 +105,11 @@ namespace Fxt
     // RAM
     if (addr < 0x8000) sys.ram[addr] = val;
     // UART
-    if (addr == 0xE000) putchar(val);
+    if (addr == 0xE000)
+    {
+      putchar(val);
+      fflush(stdout);
+    }
     // VIA
     if (addr >= 0xE200 && addr <= 0xE20F) Via::Write(sys, addr, val);
     // PSG (YMZ294)

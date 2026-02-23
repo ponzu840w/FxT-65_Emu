@@ -26,7 +26,7 @@ namespace Fxt
         // Read (CMD17)
         READ_WAIT_TOKEN,  // データトークン待ち
         READ_SEND_DATA,   // データ送信中
-        READ_SEND_CRC,    // CRC送信中
+        // READ_SEND_CRC,    // CRC送信中
         // Write (CMD24)
         WRITE_WAIT_TOKEN, // スタートトークン待ち
         WRITE_RECEIVE,    // データ受信中
