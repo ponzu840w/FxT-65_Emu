@@ -255,21 +255,12 @@ namespace Sd
           #endif
           if (sd.data_idx >= 512)
           {
-            //sd.phase = State::READ_SEND_CRC;
+            // CMD17のデータ転送直後にIDLE状態に戻る（CRC出力はさぼる）
             sd.phase = State::IDLE;
             sd.data_idx = 0;
           }
           return d;
         }
-      /* セクタデータ転送後のダミーCRCチェックがあるはずなのだが、MIRACOSはそれを想定していない？
-      case State::READ_SEND_CRC:
-        #ifdef DEBUG_SD
-          fprintf(stderr, "[SD] READ_SEND_CRC\n");
-        #endif
-        sd.data_idx++;
-        if (sd.data_idx >= 2) sd.phase = State::IDLE;
-        return 0xFF;
-      */
       case State::WRITE_WAIT_TOKEN:
         #ifdef DEBUG_SD
           fprintf(stderr, "[SD] WRITE_WAIT_TOKEN\n");
