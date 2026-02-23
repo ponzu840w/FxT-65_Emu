@@ -9,3 +9,4 @@
 #include "lib/sokol/sokol_gfx.h"
 #include "lib/sokol/sokol_glue.h"
 #include "lib/sokol/sokol_args.h"
+#include "lib/sokol/sokol_audio.h"

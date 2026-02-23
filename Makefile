@@ -22,7 +22,7 @@ LIB_DIR   := $(SRC_DIR)/lib
 TARGET = fxt65
 
 # macOS フレームワーク
-LDFLAGS   := -framework Cocoa -framework Metal -framework MetalKit -framework QuartzCore
+LDFLAGS   := -framework Cocoa -framework Metal -framework MetalKit -framework QuartzCore -framework AudioToolbox
 
 # ----------
 #  自動探索

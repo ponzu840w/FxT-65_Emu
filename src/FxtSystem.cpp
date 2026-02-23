@@ -91,6 +91,8 @@ namespace Fxt
       if (addr == 0xE001) return sys.uart_status;
       // --- VIA
       if (addr >= 0xE200 && addr <= 0xE20F) return Via::Read(sys, addr);
+      // --- PSG (YMZ294) データ読み出し
+      if (addr == 0xE401) return Psg::ReadData(sys.psg);
       // ROM
       if (addr >= 0xF000) return sys.rom[addr & 0x0FFF];
     }
@@ -106,6 +108,9 @@ namespace Fxt
     if (addr == 0xE000) putchar(val);
     // VIA
     if (addr >= 0xE200 && addr <= 0xE20F) Via::Write(sys, addr, val);
+    // PSG (YMZ294)
+    if (addr == 0xE400) Psg::WriteAddr(sys.psg, val);
+    if (addr == 0xE401) Psg::WriteData(sys.psg, val);
     // Chiina-Dazzler CRTC
     if (addr >= 0xE600 && addr <= 0xE607) Chdz::Write(sys.chdz, addr, val);
   }

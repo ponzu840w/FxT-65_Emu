@@ -9,6 +9,7 @@
 #include "Sd.hpp"
 #include "Chdz.hpp"
 #include "Ps2.hpp"
+#include "Psg.hpp"
 
 extern "C"
 {
@@ -74,6 +75,9 @@ namespace Fxt
 
     // PS/2キーボード
     Ps2::State ps2;
+
+    // PSG (YMZ294)
+    Psg::State psg;
 
     // エミュレータ設定
     EmulatorConfig cfg;

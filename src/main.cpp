@@ -3,15 +3,17 @@
 #ifndef SOKOL_METAL
 #define SOKOL_METAL
 #endif
-#include "lib/sokol/sokol_app.h"  // アプリラッパ
-#include "lib/sokol/sokol_gfx.h"  // グラフィック
-#include "lib/sokol/sokol_glue.h" // appとgfxのグルー
-#include "lib/sokol/sokol_log.h"  // ロギング
-#include "lib/sokol/sokol_args.h" // コマンドライン引数
+#include "lib/sokol/sokol_app.h"   // アプリラッパ
+#include "lib/sokol/sokol_gfx.h"   // グラフィック
+#include "lib/sokol/sokol_glue.h"  // appとgfxのグルー
+#include "lib/sokol/sokol_log.h"   // ロギング
+#include "lib/sokol/sokol_args.h"  // コマンドライン引数
+#include "lib/sokol/sokol_audio.h" // オーディオ出力
 
 #include "FxtSystem.hpp"
 #include "Chdz.hpp"
 #include "Ps2.hpp"
+#include "Psg.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -24,11 +26,14 @@
 // ---------------------------------------------------------------
 //  定数
 // ---------------------------------------------------------------
-static constexpr int   DISPLAY_W    = 256;    // 論理サイズ
-static constexpr int   DISPLAY_H    = 768;
-static constexpr int   WINDOW_W     = 1024;   // 表示サイズ
-static constexpr int   WINDOW_H     = 768;
-static constexpr float PADDING_PX   = 20.0f; // ウィンドウ内の余白 [px]
+static constexpr int   DISPLAY_W        = 256;    // 論理サイズ
+static constexpr int   DISPLAY_H        = 768;
+static constexpr int   WINDOW_W         = 1024;   // 表示サイズ
+static constexpr int   WINDOW_H         = 768;
+static constexpr float PADDING_PX       = 20.0f;  // ウィンドウ内の余白 [px]
+static constexpr int   AUDIO_SAMPLE_RATE = 44100; // 音声サンプルレート [Hz]
+static constexpr int   AUDIO_BUF_SIZE   = 2048;   // 音声バッファサイズ [サンプル]
+static constexpr float INT16_FULL_SCALE = 32768.0f; // int16_t→float 正規化係数
 
 // ---------------------------------------------------------------
 //  グローバル状態
@@ -134,6 +139,16 @@ static const char* fs_src =
 // ---------------------------------------------------------------
 static void init_cb(void)
 {
+  // sokol_audio 初期化
+  {
+    saudio_desc audio_desc = {};
+    audio_desc.num_channels = 1;
+    audio_desc.sample_rate  = AUDIO_SAMPLE_RATE;
+    audio_desc.logger.func  = slog_func;
+    saudio_setup(&audio_desc);
+    Psg::Init(g_sys.psg, saudio_sample_rate()); // 実際のレートで初期化
+  }
+
   // sokol_gfx 初期化
   sg_desc gfx_desc = {};
   gfx_desc.environment = sglue_environment();
@@ -242,7 +257,9 @@ static void init_cb(void)
 // ---------------------------------------------------------------
 //  frame_cb  フレームごとに呼ばれる
 // ---------------------------------------------------------------
-static int g_input_cnt = 0;
+static int   g_input_cnt  = 0;
+static int   g_audio_acc  = 0;
+static float g_audio_buf[AUDIO_BUF_SIZE];
 
 static void frame_cb(void)
 {
@@ -269,8 +286,29 @@ static void frame_cb(void)
   }
 
   // エミュレーション実行
-  for (int i = 0; i < g_sys.cfg.ticks_per_frame(); i++)
+  int tpf = g_sys.cfg.ticks_per_frame();  // 1フレームあたり何ティックか
+  int audio_count = 0;                    // バッファのインデックス
+  int sr  = saudio_sample_rate();         // 音声サンプリングレート
+  for (int i = 0; i < tpf; i++)
+  {
+    // FxT-65のティック=CPUクロックを進める
     Fxt::Tick(g_sys);
+
+    // 音声サンプリング（CPUクロックよりも低頻度）
+    // cpu_hzに対して、sr/cpu_hz の頻度で実行
+    g_audio_acc += sr;
+    if (g_audio_acc >= g_sys.cfg.cpu_hz)
+    {
+      // カウンタをリセットするが端数を保存
+      g_audio_acc -= g_sys.cfg.cpu_hz;
+      // PSG出力信号レベル（16bit int）を正規化して音声出力
+      if (audio_count < AUDIO_BUF_SIZE)
+      {
+        g_audio_buf[audio_count++] = Psg::Calc(g_sys.psg) / INT16_FULL_SCALE;
+      }
+    }
+  }
+  saudio_push(g_audio_buf, audio_count);
 
   // フレームバッファレンダリング
   Chdz::RenderFrame(g_sys.chdz, g_pixels);
@@ -389,7 +427,9 @@ static void cleanup_cb(void)
 {
   restore_terminal();
   sg_shutdown();
+  saudio_shutdown();
   sargs_shutdown();
+  Psg::Shutdown(g_sys.psg);
   Fxt::Sd::UnmountImg(g_sys);
 }
 
