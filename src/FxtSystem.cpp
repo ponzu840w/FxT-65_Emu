@@ -42,7 +42,7 @@ namespace Fxt
   void RequestNmi(System& sys) { if (sys.nmiPin) *sys.nmiPin = IntRequested; }
   void ClearNmi(System& sys) { if (sys.nmiPin) *sys.nmiPin = IntCleared; }
 
-  // ROMロード
+  // ROMロード 8KBのイメージファイルの後半4KBをROMに読み込む（実機準拠動作）
   bool LoadRom(System& sys, const std::string& filename)
   {
     FILE* fp = fopen(filename.c_str(), "rb");
