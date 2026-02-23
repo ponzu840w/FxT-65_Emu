@@ -41,16 +41,8 @@ namespace Sd
     sys.sd.image_fp = fopen(filename.c_str(), "r+b");
     if (!sys.sd.image_fp)
     {
-      sys.sd.image_fp = fopen(filename.c_str(), "w+b");
-      if (sys.sd.image_fp)
-      {
-         printf("[SD] Created new disk image '%s'\n", filename.c_str());
-         fseek(sys.sd.image_fp, (2*1024*1024)-1, SEEK_SET);
-         fputc(0, sys.sd.image_fp);
-         rewind(sys.sd.image_fp);
-         fclose(sys.sd.image_fp);
-         sys.sd.image_fp = fopen(filename.c_str(), "r+b");
-      }
+      printf("[SD] SD card image not found.\n");
+      exit(1);
     }
     if (!sys.sd.image_fp) return false;
 
