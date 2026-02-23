@@ -170,7 +170,7 @@ void Write(State& chdz, uint16_t addr, uint8_t val)
 //    16色: row * 128 + x/2  (上位ニブル=偶数px, 下位=奇数px)
 //    2色:  row * 128 + x/8  (bit7=左端px)
 // ---------------------------------------------------------------
-void RenderFrame(const State& chdz, uint8_t* pixels)
+void RenderFrame(const State& chdz, uint32_t* pixels)
 {
   // カラーパレット
   const uint32_t* palette = GetPalette();
@@ -188,7 +188,7 @@ void RenderFrame(const State& chdz, uint8_t* pixels)
     // フレームバッファ中の行データ
     const uint8_t* src = chdz.vram[frame] + (vram_row * 128);
     // 色データを書き込むべき場所
-    uint32_t*  row_out = (uint32_t*)(pixels + (display_y * DISPLAY_W * 4));
+    uint32_t*  row_out = pixels + (display_y * DISPLAY_W);
 
     if (!ttmode)
     {

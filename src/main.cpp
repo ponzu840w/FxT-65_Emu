@@ -48,7 +48,7 @@ static sg_sampler   g_sampler;  // テクスチャサンプリング方法
 static sg_bindings  g_bind;     // シェーダ用リソースバインド情報
 static sg_pass_action g_pass_action;  // レンダーパス開始時の動作
 // 描画用バッファ CRTCエミュレータに書き込まれ、sokolが参照
-static uint8_t      g_pixels[DISPLAY_W * DISPLAY_H * 4];
+static uint32_t     g_pixels[DISPLAY_W * DISPLAY_H];
 
 // アスペクト比維持用ユニフォーム
 struct Uniforms { float scale_x; float scale_y; };

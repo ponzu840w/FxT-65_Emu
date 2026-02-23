@@ -52,7 +52,7 @@ namespace Chdz
   void Write(State& chdz, uint16_t addr, uint8_t val);
 
   // 256×768 RGBA8888 バッファにレンダリング
-  // pixels: 256*768*4 バイトの配列
-  void RenderFrame(const State& chdz, uint8_t* pixels);
+  // pixels: 256*768*4 ピクセルの配列
+  void RenderFrame(const State& chdz, uint32_t* pixels);
 
 }

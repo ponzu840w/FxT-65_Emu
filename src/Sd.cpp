@@ -70,14 +70,6 @@ namespace Sd
       fprintf(stderr, "[SD] SetCs=%d\n", active);
     #endif
     sys.sd.cs_active = active;
-    /* sd-monitorおよびMIRACOSは、コマンドシーケンス中に非アクティブになっても動き続けるSDカードの未定義動作に依存している可能性がある
-    // 非アクティブ状態ならIDLE
-    if (!active)
-    {
-      sys.sd.phase = State::IDLE;
-      sys.sd.cmd_idx = 0;
-    }
-    */
   }
 
   // 1バイトデータ送受
