@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>FxT-65 Emulator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+
+    /* 上段: キャンバス領域 */
+    #canvas-wrap {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #111;
+      overflow: hidden;
+    }
+    #canvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      outline: none;
+    }
+
+    /* 下段: UART ターミナル */
+    #terminal-bar {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      border-top: 1px solid #333;
+      background: #000;
+    }
+    #terminal-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 2px 8px;
+      background: #1a1a1a;
+      border-bottom: 1px solid #2a2a2a;
+      color: #666;
+      font-size: 11px;
+      user-select: none;
+    }
+    #terminal-label span { color: #aaa; }
+    #terminal {
+      height: 150px;
+      color: #ccc;
+      font: 13px/1.4 'Courier New', Courier, monospace;
+      padding: 4px 8px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      outline: none;
+      cursor: text;
+    }
+    #terminal:focus { background: #0a0a0a; }
+    /* 点滅カーソル */
+    #terminal-cursor {
+      display: inline-block;
+      width: 7px;
+      height: 1.1em;
+      background: #ccc;
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ローディングオーバーレイ */
+    #loading {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #888;
+      font-size: 14px;
+      z-index: 10;
+    }
+    #loading.hidden { display: none; }
+  </style>
+</head>
+<body>
+
+  <div id="loading">Loading...</div>
+
+  <!-- キャンバス (sokol が書き込む) -->
+  <div id="canvas-wrap">
+    <canvas id="canvas" tabindex="0" oncontextmenu="return false"></canvas>
+  </div>
+
+  <!-- UART ターミナル -->
+  <div id="terminal-bar">
+    <div id="terminal-label">
+      UART Terminal
+      <span id="focus-hint">入力領域クリックでUART入力モード / ビデオ画面クリックでPS/2入力モード</span>
+    </div>
+    <div id="terminal" tabindex="1"><span id="terminal-cursor"></span></div>
+  </div>
+
+  <script>
+    var canvas      = document.getElementById('canvas');
+    var canvasWrap  = document.getElementById('canvas-wrap');
+    var terminal    = document.getElementById('terminal');
+    var termCursor  = document.getElementById('terminal-cursor');
+    var loading     = document.getElementById('loading');
+    var focusHint   = document.getElementById('focus-hint');
+
+    // UART 入力キュー: C++ の EM_ASM_INT でフレームごとにポーリングされる
+    var uartInputQueue = [];
+
+    // ---- canvas サイズ追従 ----
+    // canvasWrap の寸法に合わせて canvas の CSS サイズを更新する
+    // canvas 描画バッファは sokol が 1024×768 に固定している (canvas_resize=true)
+    function fitCanvas() {
+      var w = canvasWrap.clientWidth;
+      var h = canvasWrap.clientHeight;
+      if (w <= 0 || h <= 0) return;
+      var aspect = 1024 / 768;
+      var dispW, dispH;
+      if (w / h > aspect) { dispH = h; dispW = h * aspect; }
+      else                { dispW = w; dispH = w / aspect; }
+      canvas.style.width  = Math.floor(dispW) + 'px';
+      canvas.style.height = Math.floor(dispH) + 'px';
+    }
+    window.addEventListener('resize', fitCanvas);
+
+    // canvas の width/height 属性変化を監視 (sokol 初期化時に 1024×768 が設定される)
+    new MutationObserver(function(mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var name = mutations[i].attributeName;
+        if (name === 'width' || name === 'height') {
+          fitCanvas();
+          break;
+        }
+      }
+    }).observe(canvas, { attributes: true, attributeFilter: ['width', 'height'] });
+
+    // ---- canvas クリックでフォーカス (PS/2 入力モードに切り替え) ----
+    canvasWrap.addEventListener('mousedown', function() {
+      canvas.focus();
+    });
+
+    // ---- terminal キーボード処理 ----
+    terminal.addEventListener('keydown', function(e) {
+      e.preventDefault();
+      var ch = -1;
+      if      (e.key === 'Enter')     ch = 10;
+      else if (e.key === 'Backspace') ch = 8;
+      else if (e.key === 'Escape')    ch = 27;
+      else if (e.key === 'Tab')       ch = 9;
+      else if (e.key.length === 1) {
+        ch = e.key.charCodeAt(0);
+        if (e.ctrlKey && ch >= 64 && ch <= 95) ch &= 0x1F;
+        else if (e.ctrlKey && ch >= 96 && ch <= 127) ch &= 0x1F;
+      }
+      if (ch >= 0) uartInputQueue.push(ch);
+    });
+
+    terminal.addEventListener('focus', function() {
+      focusHint.textContent = 'UART 入力モード';
+    });
+    terminal.addEventListener('blur', function() {
+      focusHint.textContent = 'PS/2 入力モード';
+    });
+
+    // ---- terminal 出力ヘルパー ----
+    // FS.init の stdout コールバックから1文字ずつ呼ばれる
+    function appendChar(ch) {
+      // カーソル要素の直前に文字ノードを挿入
+      var text = String.fromCharCode(ch);
+      terminal.insertBefore(document.createTextNode(text), termCursor);
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    // ---- Emscripten Module 設定 ----
+    var Module = {
+      canvas: canvas,
+
+      // preRun: FS が準備されたタイミングで stdout を文字単位出力にオーバーライド
+      // これにより \n なしの "A:>" のようなプロンプトも即時表示される
+      preRun: [function() {
+        FS.init(null, function(ch) {
+          if (ch !== null && ch !== undefined) appendChar(ch);
+        }, null);
+      }],
+
+      // postRun: sokol 初期化完了後に canvas サイズを再計算
+      // (canvas_resize=true により canvas は 1024×768 に設定済みのはず)
+      postRun: [function() {
+        fitCanvas();
+        canvas.focus();
+      }],
+
+      // フォールバック: TTY レイヤを通った行単位出力
+      print: function(text) {
+        for (var i = 0; i < text.length; i++) appendChar(text.charCodeAt(i));
+        appendChar(10); // \n
+      },
+      printErr: function(text) { console.warn('[ERR] ' + text); },
+
+      setStatus: function(text) {
+        if (text === '') {
+          loading.classList.add('hidden');
+        } else {
+          loading.textContent = text;
+        }
+      },
+      totalDependencies: 0,
+      monitorRunDependencies: function(n) {
+        this.totalDependencies = Math.max(this.totalDependencies, n);
+      }
+    };
+
+    window.onerror = function(msg) {
+      loading.textContent = 'Error: ' + msg;
+      loading.classList.remove('hidden');
+    };
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

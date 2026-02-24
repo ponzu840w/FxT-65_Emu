@@ -13,13 +13,6 @@ namespace Fxt
   namespace Sd
   {
 
-    // SPRS スパースセクタエントリ
-    struct SparseSector
-    {
-      uint32_t lba;
-      uint8_t  data[512];
-    };
-
     // 内部状態
     struct State
     {
@@ -33,7 +26,6 @@ namespace Fxt
         // Read (CMD17)
         READ_WAIT_TOKEN,  // データトークン待ち
         READ_SEND_DATA,   // データ送信中
-        // READ_SEND_CRC,    // CRC送信中
         // Write (CMD24)
         WRITE_WAIT_TOKEN, // スタートトークン待ち
         WRITE_RECEIVE,    // データ受信中
@@ -48,6 +40,16 @@ namespace Fxt
       uint32_t total_sectors = 0;
       uint32_t current_lba = 0;
 
+      // ファイル種別
+      enum FileType { FLAT, FIXED_VHD, DYNAMIC_VHD } file_type = FLAT;
+
+      // Dynamic VHD 用フィールド
+      std::vector<uint32_t> bat;     // BAT エントリ (ネイティブエンディアン)
+      uint32_t sectors_per_block = 0;// ブロックあたりセクタ数 (block_size / 512)
+      uint32_t bitmap_sectors = 0;   // ブロック先頭ビットマップのセクタ数
+      uint64_t bat_file_offset = 0;  // BAT 先頭のファイル内バイトオフセット
+      uint8_t  vhd_footer[512];      // フッターコピー (動的割り当て時に再書き込み)
+
       // バッファ
       uint8_t cmd_buffer[6];       // 受信コマンド
       uint8_t cmd_idx = 0;
@@ -59,11 +61,6 @@ namespace Fxt
 
       uint8_t sector_buffer[512];  // セクタデータ
       uint16_t data_idx = 0;
-
-      // SPRS スパース形式サポート
-      bool is_sparse    = false;
-      bool sparse_dirty = false;
-      std::vector<SparseSector> sparse_sectors; // LBA 昇順ソート済み
     };
 
     // 操作関数

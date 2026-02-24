@@ -19,7 +19,8 @@ ifeq ($(PLATFORM),web)
   CFLAGS   := -O2
   LDFLAGS  := -sUSE_WEBGL2=1 -sWASM=1 -sALLOW_MEMORY_GROWTH=1 \
                --preload-file assets/rom.bin \
-               --preload-file sdcard.img
+               --preload-file sdcard.vhd \
+               --shell-file src/shell.html
   SRCS_CPP := $(wildcard $(SRC_DIR)/*.cpp)
   SRCS_MM  :=
   CLEAN_EXTRA := docs/fxt65.js docs/fxt65.wasm docs/fxt65.data
@@ -87,11 +88,29 @@ clean:
 	@echo "Cleaning up."
 	@rm -rf $(OBJ_DIR) $(TARGET) $(CLEAN_EXTRA)
 
-# sdcard.img を SPRS スパース形式に変換（Web ビルド前に実行）
-# 元のフラット形式は sdcard_flat.img として保存
-sparse: tools/to_sparse.py
-	@[ -f sdcard_flat.img ] || cp sdcard.img sdcard_flat.img
-	python3 tools/to_sparse.py sdcard_flat.img sdcard.img
-	@echo "sdcard.img を SPRS スパース形式に変換しました（元: sdcard_flat.img）"
+# ----------
+#  SDカード イメージ変換
+# ----------
+#
+# ワークフロー:
+#   1. ./mksd.sh          : sdcard.img を新規作成（FAT32クラスタサイズ32セクタ等の制約を満たす）
+#   2. make vhd           : sdcard.img → sdcard.vhd (Dynamic VHD, ネイティブ・Web 共用)
+#   3. make img           : sdcard.vhd → sdcard.img (macOS で編集する際に展開)
+#                           ↓ hdiutil attach -imagekey diskimage-class=CRawDiskImage sdcard.img
+#                           ↓ ファイル編集
+#                           ↓ hdiutil detach /Volumes/MCOS
+#   4. make vhd           : 編集後の sdcard.img を再度 VHD に変換
 
-.PHONY: clean sparse
+# sdcard.img → sdcard.vhd (Dynamic VHD) に変換
+# Dynamic VHD は未使用ブロック（2MB 単位）を省略し 2GB → 数 MB に圧縮できる
+vhd: tools/to_dynamic_vhd.py sdcard.img
+	python3 tools/to_dynamic_vhd.py sdcard.img sdcard.vhd
+	@echo "作成完了: sdcard.vhd (Dynamic VHD)"
+
+# sdcard.vhd → sdcard.img (フラット) に展開（macOS 編集用）
+img: tools/vhd_to_img.py sdcard.vhd
+	python3 tools/vhd_to_img.py sdcard.vhd sdcard.img
+	@echo "展開完了: sdcard.img"
+	@echo "マウント:   hdiutil attach -imagekey diskimage-class=CRawDiskImage sdcard.img"
+
+.PHONY: clean vhd img

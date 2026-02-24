@@ -15,7 +15,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm> // std::min
-#ifndef __EMSCRIPTEN__
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#else
 #include <unistd.h>
 #include <termios.h>
 #include <fcntl.h>
@@ -188,10 +190,11 @@ static void init_cb(void)
     return;
   }
 
-  // SD カードイメージをマウント
-  if (!Fxt::Sd::MountImg(g_sys, "sdcard.img"))
+  // SD カードイメージをマウント (.vhd → .img の順で試行)
+  if (!Fxt::Sd::MountImg(g_sys, "sdcard.vhd") &&
+      !Fxt::Sd::MountImg(g_sys, "sdcard.img"))
   {
-    fprintf(stderr, "Error: SDカードイメージ読み込みに失敗\n");
+    fprintf(stderr, "Error: SDカードイメージ読み込みに失敗 (sdcard.vhd / sdcard.img)\n");
     sapp_quit();
     return;
   }
@@ -304,29 +307,40 @@ static int   g_input_cnt  = 0;
 static int   g_audio_acc  = 0;
 static float g_audio_buf[AUDIO_BUF_SIZE];
 
+// UART 入力を処理するヘルパー
+static void process_uart_input(int ch)
+{
+  if (ch == 0x7F) ch = 0x08; // DEL → BS
+  g_sys.uart_input_buffer = (uint8_t)ch;
+  g_sys.uart_status |= 0b00001000;
+  Fxt::UpdateIrq(g_sys);
+  if (ch == ('N' - 0x40)) // Ctrl+N: NMI
+  {
+    Fxt::RequestNmi(g_sys);
+    for (int i = 0; i < 10; i++) Fxt::Tick(g_sys);
+    Fxt::ClearNmi(g_sys);
+  }
+}
+
 static void frame_cb(void)
 {
-#ifndef __EMSCRIPTEN__
-  // 標準入力処理 (4096サイクルに1回)
+#ifdef __EMSCRIPTEN__
+  // Web: JavaScript の uartInputQueue からフレームごとにポーリング
+  {
+    int ch = EM_ASM_INT({
+      return (typeof uartInputQueue !== 'undefined' && uartInputQueue.length > 0)
+        ? uartInputQueue.shift() : -1;
+    });
+    if (ch >= 0) process_uart_input(ch);
+  }
+#else
+  // ネイティブ: 標準入力処理 (4096サイクルに1回)
   g_input_cnt += g_sys.cfg.ticks_per_frame();
   if (g_input_cnt >= 4096)
   {
     g_input_cnt = 0;
     int ch = getchar();
-    if (ch != EOF)
-    {
-      if (ch == 0x7F) ch = 0x08; // DEL to BS
-      g_sys.uart_input_buffer = (uint8_t)ch;
-      g_sys.uart_status |= 0b00001000;
-      Fxt::UpdateIrq(g_sys);
-
-      if (ch == 'N' - 0x40) // Ctrl+N: NMI
-      {
-        Fxt::RequestNmi(g_sys);
-        for (int i = 0; i < 10; i++) Fxt::Tick(g_sys);
-        Fxt::ClearNmi(g_sys);
-      }
-    }
+    if (ch != EOF) process_uart_input(ch);
   }
 #endif
 
@@ -385,15 +399,28 @@ static void frame_cb(void)
 // ---------------------------------------------------------------
 static void event_cb(const sapp_event* ev)
 {
+#ifdef __EMSCRIPTEN__
+  // sokol は window の capture phase にキーイベントを登録するため、
+  // terminal にフォーカスがあっても event_cb が呼ばれてしまう。
+  // JS 側が uartInputQueue に積む処理と二重にならないよう、
+  // terminal フォーカス中はキーイベントを無視する。
+  if (ev->type == SAPP_EVENTTYPE_KEY_DOWN || ev->type == SAPP_EVENTTYPE_KEY_UP)
+  {
+    if (EM_ASM_INT({
+      return document.activeElement === document.getElementById('terminal') ? 1 : 0;
+    })) return;
+  }
+#else
   static bool keyin_to_uart = false;
+#endif
+
   switch (ev->type)
   {
     // キーボード押下
     case SAPP_EVENTTYPE_KEY_DOWN:
-      // UARTとして入力
+#ifndef __EMSCRIPTEN__
       if (keyin_to_uart)
       {
-        // 印字可能文字の変換
         int ch = -1;
         if (ev->key_code == SAPP_KEYCODE_ENTER)          ch = 0x0A;
         else if (ev->key_code == SAPP_KEYCODE_BACKSPACE) ch = 0x08;
@@ -405,30 +432,18 @@ static void event_cb(const sapp_event* ev)
           if (!(ev->modifiers & SAPP_MODIFIER_SHIFT))
             ch = ch + ('a' - 'A');
         }
-
         if (ch >= 0)
         {
-          if (ev->modifiers & SAPP_MODIFIER_CTRL)
-            ch &= 0x1F;
-
-          g_sys.uart_input_buffer = (uint8_t)ch;
-          g_sys.uart_status |= 0b00001000;
-          Fxt::UpdateIrq(g_sys);
-
-          if (ch == 'N' - 0x40) // Ctrl+N: NMI
-          {
-            Fxt::RequestNmi(g_sys);
-            for (int i = 0; i < 10; i++) Fxt::Tick(g_sys);
-            Fxt::ClearNmi(g_sys);
-          }
+          if (ev->modifiers & SAPP_MODIFIER_CTRL) ch &= 0x1F;
+          process_uart_input(ch);
         }
         else
         {
-          // 特殊キーをPS/2キーボードとして入力
           Ps2::KeyDown(g_sys.ps2, (int)ev->key_code);
         }
       }
       else
+#endif
       {
         // PS/2キーボードとして入力
         Ps2::KeyDown(g_sys.ps2, (int)ev->key_code);
@@ -436,7 +451,10 @@ static void event_cb(const sapp_event* ev)
       break;
 
     case SAPP_EVENTTYPE_KEY_UP:
-      if (!keyin_to_uart) Ps2::KeyUp(g_sys.ps2, (int)ev->key_code);
+#ifndef __EMSCRIPTEN__
+      if (!keyin_to_uart)
+#endif
+        Ps2::KeyUp(g_sys.ps2, (int)ev->key_code);
       break;
 
     case SAPP_EVENTTYPE_RESIZED:
@@ -516,5 +534,10 @@ sapp_desc sokol_main(int argc, char* argv[])
   desc.height       = WINDOW_H;
   desc.window_title = "FxT-65 Emulator";
   desc.logger.func  = slog_func;
+#ifdef __EMSCRIPTEN__
+  // canvas_resize=true: CanvasをCSSサイズではなくdesc.width/heightで固定する
+  // (falseだとsokolがCSSを読んでフレームバッファを作るため初期表示が崩れる)
+  desc.html5.canvas_resize = true;
+#endif
   return desc;  // sokol appの記述子を返す
 }
