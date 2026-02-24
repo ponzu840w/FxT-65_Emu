@@ -2,6 +2,7 @@
 #include "Sd.hpp"
 #include "FxtSystem.hpp"
 #include <cstring>
+#include <algorithm>
 
 //#define DEBUG_SD // 定義するとデバッグ情報が出る
 
@@ -13,24 +14,63 @@ namespace Sd
   // ---------- 内部ヘルパー----------
   static void LoadSector(System& sys)
   {
-    if (!sys.sd.image_fp)
+    State& sd = sys.sd;
+    if (sd.is_sparse)
     {
-      memset(sys.sd.sector_buffer, 0xFF, 512);
-      return;
+      // スパース形式: LBA で二分探索
+      auto it = std::lower_bound(
+        sd.sparse_sectors.begin(), sd.sparse_sectors.end(),
+        sd.current_lba,
+        [](const SparseSector& s, uint32_t lba){ return s.lba < lba; });
+      if (it != sd.sparse_sectors.end() && it->lba == sd.current_lba)
+        memcpy(sd.sector_buffer, it->data, 512);
+      else
+        memset(sd.sector_buffer, 0, 512); // 未記録セクタはゼロ
     }
-    long offset = (long)sys.sd.current_lba * 512;
-    fseek(sys.sd.image_fp, offset, SEEK_SET);
-    size_t r = fread(sys.sd.sector_buffer, 1, 512, sys.sd.image_fp);
-    if (r < 512) memset(sys.sd.sector_buffer + r, 0, 512 - r);
+    else
+    {
+      // フラット形式
+      if (!sd.image_fp)
+      {
+        memset(sd.sector_buffer, 0xFF, 512);
+        return;
+      }
+      long offset = (long)sd.current_lba * 512;
+      fseek(sd.image_fp, offset, SEEK_SET);
+      size_t r = fread(sd.sector_buffer, 1, 512, sd.image_fp);
+      if (r < 512) memset(sd.sector_buffer + r, 0, 512 - r);
+    }
   }
 
   static void FlushSector(System& sys)
   {
-    if (!sys.sd.image_fp) return;
-    long offset = (long)sys.sd.current_lba * 512;
-    fseek(sys.sd.image_fp, offset, SEEK_SET);
-    fwrite(sys.sd.sector_buffer, 1, 512, sys.sd.image_fp);
-    fflush(sys.sd.image_fp);
+    State& sd = sys.sd;
+    if (sd.is_sparse)
+    {
+      // SPRS: 既存エントリ更新 or 新規挿入（ソート順を維持）
+      auto it = std::lower_bound(
+        sd.sparse_sectors.begin(), sd.sparse_sectors.end(),
+        sd.current_lba,
+        [](const SparseSector& s, uint32_t lba){ return s.lba < lba; });
+      if (it != sd.sparse_sectors.end() && it->lba == sd.current_lba)
+      {
+        memcpy(it->data, sd.sector_buffer, 512);
+      }
+      else
+      {
+        SparseSector ns;
+        ns.lba = sd.current_lba;
+        memcpy(ns.data, sd.sector_buffer, 512);
+        sd.sparse_sectors.insert(it, ns);
+      }
+      sd.sparse_dirty = true;
+      return;
+    }
+    if (!sd.image_fp) return;
+    long offset = (long)sd.current_lba * 512;
+    fseek(sd.image_fp, offset, SEEK_SET);
+    fwrite(sd.sector_buffer, 1, 512, sd.image_fp);
+    fflush(sd.image_fp);
   }
   // ---------- 内部ヘルパー----------
 
@@ -44,8 +84,28 @@ namespace Sd
       printf("[SD] SD card image not found.\n");
       exit(1);
     }
-    if (!sys.sd.image_fp) return false;
 
+    // SPRS スパース形式チェック
+    uint8_t magic[4] = {};
+    if (fread(magic, 1, 4, sys.sd.image_fp) == 4 && memcmp(magic, "SPRS", 4) == 0)
+    {
+      uint32_t count = 0;
+      fread(&sys.sd.total_sectors, 4, 1, sys.sd.image_fp);
+      fread(&count,                4, 1, sys.sd.image_fp);
+      sys.sd.sparse_sectors.resize(count);
+      for (uint32_t i = 0; i < count; i++)
+      {
+        fread(&sys.sd.sparse_sectors[i].lba,  4,   1, sys.sd.image_fp);
+        fread( sys.sd.sparse_sectors[i].data, 512, 1, sys.sd.image_fp);
+      }
+      sys.sd.is_sparse = true;
+      printf("[SD] Mounted '%s' as SPRS sparse (Sectors: %u, Entries: %u)\n",
+             filename.c_str(), sys.sd.total_sectors, count);
+      return true;
+    }
+
+    // フラット形式
+    rewind(sys.sd.image_fp);
     fseek(sys.sd.image_fp, 0, SEEK_END);
     sys.sd.total_sectors = ftell(sys.sd.image_fp) / 512;
     rewind(sys.sd.image_fp);
@@ -56,10 +116,29 @@ namespace Sd
   // イメージファイルを放棄
   void UnmountImg(System& sys)
   {
-    if (sys.sd.image_fp)
+    State& sd = sys.sd;
+    if (sd.image_fp)
     {
-      fclose(sys.sd.image_fp);
-      sys.sd.image_fp = nullptr;
+      // SPRS: 変更があればファイルに書き戻す
+      if (sd.is_sparse && sd.sparse_dirty)
+      {
+        rewind(sd.image_fp);
+        uint32_t count = (uint32_t)sd.sparse_sectors.size();
+        fwrite("SPRS",           1, 4, sd.image_fp);
+        fwrite(&sd.total_sectors, 4, 1, sd.image_fp);
+        fwrite(&count,            4, 1, sd.image_fp);
+        for (auto& s : sd.sparse_sectors)
+        {
+          fwrite(&s.lba,  4,   1, sd.image_fp);
+          fwrite( s.data, 512, 1, sd.image_fp);
+        }
+        fflush(sd.image_fp);
+      }
+      fclose(sd.image_fp);
+      sd.image_fp    = nullptr;
+      sd.is_sparse   = false;
+      sd.sparse_dirty = false;
+      sd.sparse_sectors.clear();
     }
   }
 

@@ -1,8 +1,5 @@
 /* src/Ps2.cpp - PS/2キーボードエミュレータ実装 */
 
-#ifndef SOKOL_METAL
-#define SOKOL_METAL
-#endif
 #include "lib/sokol/sokol_app.h"
 
 #include "Ps2.hpp"

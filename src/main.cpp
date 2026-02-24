@@ -1,8 +1,5 @@
 /* src/main.cpp - FxT-65 エミュレータ Sokol アプリ本体 */
 
-#ifndef SOKOL_METAL
-#define SOKOL_METAL
-#endif
 #include "lib/sokol/sokol_app.h"   // アプリラッパ
 #include "lib/sokol/sokol_gfx.h"   // グラフィック
 #include "lib/sokol/sokol_glue.h"  // appとgfxのグルー
@@ -17,11 +14,13 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm> // std::min
+#ifndef __EMSCRIPTEN__
 #include <unistd.h>
 #include <termios.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <algorithm> // std::min
+#endif
 
 // ---------------------------------------------------------------
 //  定数
@@ -75,6 +74,7 @@ static void update_uniforms(float win_w, float win_h)
   g_uniforms.scale_y = (scale * asp_h) / win_h;
 }
 
+#ifndef __EMSCRIPTEN__
 // 端末ノンブロッキング入力管理
 struct TerminalSession
 {
@@ -103,11 +103,35 @@ struct TerminalSession
   }
 };
 static TerminalSession* g_term = nullptr;
+#endif
 
 // ---------------------------------------------------------------
-//  シェーダーソース (Metal)
+//  シェーダーソース
 //  vertex_id から NDC を生成し、scale_x/y でアスペクト比を維持して中央配置
 // ---------------------------------------------------------------
+#ifdef SOKOL_GLES3
+static const char* vs_src =
+  "#version 300 es\n"
+  "uniform float scale_x;\n"
+  "uniform float scale_y;\n"
+  "out vec2 uv;\n"
+  "void main() {\n"
+  "  vec2 ndc = vec2(\n"
+  "    (gl_VertexID & 1) != 0 ? 1.0 : -1.0,\n"
+  "    (gl_VertexID & 2) != 0 ? -1.0 : 1.0);\n"
+  "  gl_Position = vec4(ndc * vec2(scale_x, scale_y), 0.0, 1.0);\n"
+  "  uv = vec2(\n"
+  "    (gl_VertexID & 1) != 0 ? 1.0 : 0.0,\n"
+  "    (gl_VertexID & 2) != 0 ? 1.0 : 0.0);\n"
+  "}\n";
+static const char* fs_src =
+  "#version 300 es\n"
+  "precision mediump float;\n"
+  "uniform sampler2D tex;\n"
+  "in vec2 uv;\n"
+  "out vec4 frag_color;\n"
+  "void main() { frag_color = texture(tex, uv); }\n";
+#else
 static const char* vs_src =
   "#include <metal_stdlib>\n"
   "using namespace metal;\n"
@@ -133,6 +157,7 @@ static const char* fs_src =
   "    sampler smp [[sampler(0)]]) {\n"
   "  return tex.sample(smp, in.uv);\n"
   "}\n";
+#endif
 
 // ---------------------------------------------------------------
 //  init_cb
@@ -171,8 +196,10 @@ static void init_cb(void)
     return;
   }
 
+#ifndef __EMSCRIPTEN__
   // 端末ノンブロッキング入力設定
   g_term = new TerminalSession();
+#endif
 
   // エミュレータ初期化
   Fxt::Init(g_sys);
@@ -213,14 +240,25 @@ static void init_cb(void)
   {
     sg_shader_desc shd_desc = {};
     shd_desc.vertex_func.source   = vs_src;
+#ifndef SOKOL_GLES3
     shd_desc.vertex_func.entry    = "_main";
+#endif
     shd_desc.fragment_func.source = fs_src;
+#ifndef SOKOL_GLES3
     shd_desc.fragment_func.entry  = "_main";
+#endif
     // 頂点シェーダーのユニフォームブロック slot 0 (アスペクト比スケール)
     shd_desc.uniform_blocks[0].stage        = SG_SHADERSTAGE_VERTEX;
     shd_desc.uniform_blocks[0].size         = sizeof(Uniforms);
     shd_desc.uniform_blocks[0].layout       = SG_UNIFORMLAYOUT_NATIVE;
+#ifndef SOKOL_GLES3
     shd_desc.uniform_blocks[0].msl_buffer_n = 0; // [[buffer(0)]]
+#else
+    shd_desc.uniform_blocks[0].glsl_uniforms[0].glsl_name = "scale_x";
+    shd_desc.uniform_blocks[0].glsl_uniforms[0].type = SG_UNIFORMTYPE_FLOAT;
+    shd_desc.uniform_blocks[0].glsl_uniforms[1].glsl_name = "scale_y";
+    shd_desc.uniform_blocks[0].glsl_uniforms[1].type = SG_UNIFORMTYPE_FLOAT;
+#endif
     // フラグメントシェーダーのテクスチャビュー宣言 (slot 0)
     shd_desc.views[0].texture.stage       = SG_SHADERSTAGE_FRAGMENT;
     shd_desc.views[0].texture.image_type  = SG_IMAGETYPE_2D;
@@ -232,6 +270,9 @@ static void init_cb(void)
     shd_desc.texture_sampler_pairs[0].stage        = SG_SHADERSTAGE_FRAGMENT;
     shd_desc.texture_sampler_pairs[0].view_slot    = 0;
     shd_desc.texture_sampler_pairs[0].sampler_slot = 0;
+#ifdef SOKOL_GLES3
+    shd_desc.texture_sampler_pairs[0].glsl_name = "tex";
+#endif
     shd_desc.label = "chdz-shader";
     shd = sg_make_shader(&shd_desc);
   }
@@ -257,12 +298,15 @@ static void init_cb(void)
 // ---------------------------------------------------------------
 //  frame_cb  フレームごとに呼ばれる
 // ---------------------------------------------------------------
+#ifndef __EMSCRIPTEN__
 static int   g_input_cnt  = 0;
+#endif
 static int   g_audio_acc  = 0;
 static float g_audio_buf[AUDIO_BUF_SIZE];
 
 static void frame_cb(void)
 {
+#ifndef __EMSCRIPTEN__
   // 標準入力処理 (4096サイクルに1回)
   g_input_cnt += g_sys.cfg.ticks_per_frame();
   if (g_input_cnt >= 4096)
@@ -284,6 +328,7 @@ static void frame_cb(void)
       }
     }
   }
+#endif
 
   // エミュレーション実行
   int tpf = g_sys.cfg.ticks_per_frame();  // 1フレームあたり何ティックか
@@ -404,6 +449,7 @@ static void event_cb(const sapp_event* ev)
   }
 }
 
+#ifndef __EMSCRIPTEN__
 // ---------------------------------------------------------------
 //  端末復元 (cleanup_cb・シグナルハンドラ共通)
 // ---------------------------------------------------------------
@@ -419,13 +465,16 @@ static void signal_cleanup(int sig)
   signal(sig, SIG_DFL);
   raise(sig);
 }
+#endif
 
 // ---------------------------------------------------------------
 //  cleanup_cb 最後に一回呼ばれる
 // ---------------------------------------------------------------
 static void cleanup_cb(void)
 {
+#ifndef __EMSCRIPTEN__
   restore_terminal();
+#endif
   sg_shutdown();
   saudio_shutdown();
   sargs_shutdown();
@@ -438,9 +487,11 @@ static void cleanup_cb(void)
 // ---------------------------------------------------------------
 sapp_desc sokol_main(int argc, char* argv[])
 {
+#ifndef __EMSCRIPTEN__
   // SIGINT/SIGTERM で端末状態を復元する
   signal(SIGINT,  signal_cleanup);
   signal(SIGTERM, signal_cleanup);
+#endif
 
   // コマンドライン引数パース
   sargs_desc sargs_d = {};

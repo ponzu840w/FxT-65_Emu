@@ -11,10 +11,7 @@
 #include "Ps2.hpp"
 #include "Psg.hpp"
 
-extern "C"
-{
-  #include "lib/vrEmu6502.h"
-}
+#include "lib/vrEmu6502.h"
 
 namespace Fxt
 {

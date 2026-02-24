@@ -13,6 +13,13 @@ namespace Fxt
   namespace Sd
   {
 
+    // SPRS スパースセクタエントリ
+    struct SparseSector
+    {
+      uint32_t lba;
+      uint8_t  data[512];
+    };
+
     // 内部状態
     struct State
     {
@@ -52,6 +59,11 @@ namespace Fxt
 
       uint8_t sector_buffer[512];  // セクタデータ
       uint16_t data_idx = 0;
+
+      // SPRS スパース形式サポート
+      bool is_sparse    = false;
+      bool sparse_dirty = false;
+      std::vector<SparseSector> sparse_sectors; // LBA 昇順ソート済み
     };
 
     // 操作関数
