@@ -176,9 +176,16 @@
     // ---- terminal 出力ヘルパー ----
     // FS.init の stdout コールバックから1文字ずつ呼ばれる
     function appendChar(ch) {
-      // カーソル要素の直前に文字ノードを挿入
-      var text = String.fromCharCode(ch);
-      terminal.insertBefore(document.createTextNode(text), termCursor);
+      if (ch === 8) {
+        // BS (0x08): カーソル直前のテキストノードを1文字削除
+        var prev = termCursor.previousSibling;
+        if (prev && prev.nodeType === Node.TEXT_NODE) {
+          terminal.removeChild(prev);
+        }
+      } else {
+        // 通常文字: カーソル要素の直前に文字ノードを挿入
+        terminal.insertBefore(document.createTextNode(String.fromCharCode(ch)), termCursor);
+      }
       terminal.scrollTop = terminal.scrollHeight;
     }
 
