@@ -7407,7 +7407,7 @@ static struct {
     { "BracketLeft",    SAPP_KEYCODE_LEFT_BRACKET },
     { "Backslash",      SAPP_KEYCODE_BACKSLASH },
     { "BracketRight",   SAPP_KEYCODE_RIGHT_BRACKET },
-    { "Quote",          SAPP_KEYCODE_GRAVE_ACCENT },    // FIXME: ???
+    { "Quote",          SAPP_KEYCODE_APOSTROPHE },
     { 0, SAPP_KEYCODE_INVALID },
 };
 
