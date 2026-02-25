@@ -26,7 +26,7 @@ sudo "$(brew --prefix)/sbin/mkfs.fat" -F 32 -s 32 -f 2 ${DISK}s1
 # マウントしてMIRACOSシステムファイルをコピー
 MNT=$(mktemp -d)
 sudo mount -t msdos ${DISK}s1 $MNT
-sudo cp -r assets/MIRACOS_SDC/* $MNT/
+sudo cp -r miracos/bin/* $MNT/
 sudo umount $MNT
 
 # デタッチ

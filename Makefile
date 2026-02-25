@@ -94,6 +94,12 @@ $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c $< -o $@
 
+# OS ビルド: miracos サブモジュールから bin/ を生成
+OS_SRC := miracos
+
+os:
+	cd $(OS_SRC) && ./makeos.sh
+
 # ROM を強制再ビルド
 rom:
 	$(MAKE) -C $(ROM_SRC)
@@ -129,4 +135,4 @@ img: tools/vhd_to_img.py sdcard.vhd
 	@echo "展開完了: sdcard.img"
 	@echo "マウント:   hdiutil attach -imagekey diskimage-class=CRawDiskImage sdcard.img"
 
-.PHONY: clean rom vhd img
+.PHONY: clean rom vhd img os
