@@ -27,6 +27,10 @@ target
 fxt65
 *.o
 obj/
+obj_web/
+web_build/
+sdcard.vhd
+assets/rom.bin
 *.img
 tmp_doc/
 tags

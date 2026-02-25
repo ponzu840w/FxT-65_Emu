@@ -1,0 +1,3 @@
+[submodule "sd-monitor"]
+	path = sd-monitor
+	url = https://github.com/ponzu840w/sd-monitor.git

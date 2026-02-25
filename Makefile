@@ -13,8 +13,8 @@ LIB_DIR   := $(SRC_DIR)/lib
 ifeq ($(PLATFORM),web)
   CXX      := em++
   CC       := emcc
-  TARGET   := docs/fxt65.html
-  OBJ_DIR  := obj_web
+  TARGET   := web_build/fxt65.html
+  OBJ_DIR  := obj/web
   CXXFLAGS := -std=c++11 -Wall -DSOKOL_GLES3 -O2
   CFLAGS   := -O2
   LDFLAGS  := -sUSE_WEBGL2=1 -sWASM=1 -sALLOW_MEMORY_GROWTH=1 \
@@ -23,13 +23,13 @@ ifeq ($(PLATFORM),web)
                --shell-file src/shell.html
   SRCS_CPP := $(wildcard $(SRC_DIR)/*.cpp)
   SRCS_MM  :=
-  CLEAN_EXTRA := docs/fxt65.js docs/fxt65.wasm docs/fxt65.data
+  CLEAN_EXTRA := web_build/fxt65.js web_build/fxt65.wasm web_build/fxt65.data
 else
   CXX      := clang++
   CC       := cc
   OBJCXX   := clang++
   TARGET   := fxt65
-  OBJ_DIR  := obj
+  OBJ_DIR  := obj/mac
   CXXFLAGS := -std=c++11 -Wall -DSOKOL_METAL
   CFLAGS   := -O2
   LDFLAGS  := -framework Cocoa -framework Metal -framework MetalKit \
@@ -38,6 +38,10 @@ else
   SRCS_MM  := $(wildcard $(SRC_DIR)/*.mm)
   CLEAN_EXTRA :=
 endif
+
+# ROM
+ROM_SRC := sd-monitor
+ROM     := assets/rom.bin
 
 # ----------
 #  自動探索
@@ -59,11 +63,18 @@ OBJS     := $(OBJS_CPP) $(OBJS_MM) $(OBJS_C)
 # ----------
 
 # リンク
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) $(ROM)
 	@echo "Linking $@"
 	@mkdir -p $(dir $@)
-	@$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	@$(CXX) $(CXXFLAGS) -o $@ $(OBJS) $(LDFLAGS)
 	@echo "Build Complete."
+
+# ROM ビルド: サブモジュールから assets/rom.bin を生成
+$(ROM): $(ROM_SRC)/rom.bin
+	cp $< $@
+
+$(ROM_SRC)/rom.bin:
+	$(MAKE) -C $(ROM_SRC)
 
 # C++
 $(OBJ_DIR)/%.o: %.cpp
@@ -83,10 +94,15 @@ $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c $< -o $@
 
+# ROM を強制再ビルド
+rom:
+	$(MAKE) -C $(ROM_SRC)
+	cp $(ROM_SRC)/rom.bin $(ROM)
+
 # クリーンアップ
 clean:
 	@echo "Cleaning up."
-	@rm -rf $(OBJ_DIR) $(TARGET) $(CLEAN_EXTRA)
+	@rm -rf obj/ web_build/ fxt65
 
 # ----------
 #  SDカード イメージ変換
@@ -113,4 +129,4 @@ img: tools/vhd_to_img.py sdcard.vhd
 	@echo "展開完了: sdcard.img"
 	@echo "マウント:   hdiutil attach -imagekey diskimage-class=CRawDiskImage sdcard.img"
 
-.PHONY: clean vhd img
+.PHONY: clean rom vhd img
