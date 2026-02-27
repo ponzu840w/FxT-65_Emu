@@ -198,61 +198,7 @@ struct TerminalSession
 static TerminalSession* g_term = nullptr;
 #endif
 
-// ---------------------------------------------------------------
-//  シェーダーソース
-//  vertex_id から NDC を生成し、scale_x/y でアスペクト比を維持して中央配置
-//  offset_y: バーによる Y オフセット (NDC)
-// ---------------------------------------------------------------
-#ifdef SOKOL_GLES3
-static const char* vs_src =
-  "#version 300 es\n"
-  "uniform float scale_x;\n"
-  "uniform float scale_y;\n"
-  "uniform float offset_y;\n"
-  "out vec2 uv;\n"
-  "void main() {\n"
-  "  vec2 ndc = vec2(\n"
-  "    (gl_VertexID & 1) != 0 ? 1.0 : -1.0,\n"
-  "    (gl_VertexID & 2) != 0 ? -1.0 : 1.0);\n"
-  "  gl_Position = vec4(ndc.x * scale_x, ndc.y * scale_y + offset_y, 0.0, 1.0);\n"
-  "  uv = vec2(\n"
-  "    (gl_VertexID & 1) != 0 ? 1.0 : 0.0,\n"
-  "    (gl_VertexID & 2) != 0 ? 1.0 : 0.0);\n"
-  "}\n";
-static const char* fs_src =
-  "#version 300 es\n"
-  "precision mediump float;\n"
-  "uniform sampler2D tex;\n"
-  "in vec2 uv;\n"
-  "out vec4 frag_color;\n"
-  "void main() { frag_color = texture(tex, uv); }\n";
-#else
-static const char* vs_src =
-  "#include <metal_stdlib>\n"
-  "using namespace metal;\n"
-  "struct vs_out { float4 pos [[position]]; float2 uv; };\n"
-  "struct Uniforms { float scale_x; float scale_y; float offset_y; };\n"
-  "vertex vs_out _main(uint vid [[vertex_id]],\n"
-  "    constant Uniforms& u [[buffer(0)]]) {\n"
-  "  vs_out o;\n"
-  "  float2 ndc = float2((vid & 1) ? 1.0 : -1.0,\n"
-  "                      (vid & 2) ? -1.0 : 1.0);\n"
-  "  o.pos = float4(ndc.x * u.scale_x, ndc.y * u.scale_y + u.offset_y, 0.0, 1.0);\n"
-  "  o.uv  = float2((vid & 1) ? 1.0 : 0.0,\n"
-  "                 (vid & 2) ? 1.0 : 0.0);\n"
-  "  return o;\n"
-  "}\n";
-
-static const char* fs_src =
-  "#include <metal_stdlib>\n"
-  "using namespace metal;\n"
-  "struct vs_out { float4 pos [[position]]; float2 uv; };\n"
-  "fragment float4 _main(vs_out in [[stage_in]],\n"
-  "    texture2d<float> tex [[texture(0)]],\n"
-  "    sampler smp [[sampler(0)]]) {\n"
-  "  return tex.sample(smp, in.uv);\n"
-  "}\n";
-#endif
+#include "Shaders.hpp"
 
 // ---------------------------------------------------------------
 //  init_cb
