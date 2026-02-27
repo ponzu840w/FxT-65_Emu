@@ -1,4 +1,8 @@
-/* src/Sd.cpp */
+/* src/Sd.cpp*/
+/*
+  LBA (Logical Block Addressing): セクタの通し番号 0, 1, 2, ...
+  BAT (Block Allocation Table)  : VHDの各ブロックの状態を示す32bit値の配列
+ */
 #include "Sd.hpp"
 #include "FxtSystem.hpp"
 #include <cstring>
@@ -31,13 +35,17 @@ namespace Sd
   }
 
   // ---------- 内部ヘルパー ----------
+  // current_lbaで指定されたセクタをディスクから読み出す
   static void LoadSector(System& sys)
   {
     State& sd = sys.sd;
 
+    // 可変容量VHD
     if (sd.file_type == State::DYNAMIC_VHD)
     {
-      uint32_t block_num      = sd.current_lba / sd.sectors_per_block;
+      // 該当するブロック
+      uint32_t block_num       = sd.current_lba / sd.sectors_per_block;
+      // ブロック内のセクタ番号オフセット
       uint32_t sector_in_block = sd.current_lba % sd.sectors_per_block;
 
       // 未割り当てブロックはゼロを返す
@@ -47,17 +55,20 @@ namespace Sd
         return;
       }
 
-      uint64_t block_byte  = (uint64_t)sd.bat[block_num] * 512;
-      uint64_t sector_byte = block_byte
-                           + (uint64_t)sd.bitmap_sectors * 512
-                           + (uint64_t)sector_in_block   * 512;
-      fseek(sd.image_fp, (long)sector_byte, SEEK_SET);
+      // セクタの実バイトオフセット算出
+      uint64_t sector_offset = (uint64_t)(
+                                    sd.bat[block_num]   // ブロック先頭LBA
+                                  + sd.bitmap_sectors   // ブロック冒頭ビットマップのセクタ数
+                                  + sector_in_block     // ブロック内セクタオフセット
+                                ) * 512;
+      // セクタ読み出し
+      fseek(sd.image_fp, (long)sector_offset, SEEK_SET);
       size_t r = fread(sd.sector_buffer, 1, 512, sd.image_fp);
       if (r < 512) memset(sd.sector_buffer + r, 0, 512 - r);
       return;
     }
 
-    // FLAT / FIXED_VHD: どちらも先頭から LBA×512 の位置に生データ
+    // RAW / 固定VHD: 先頭から LBA×512 の位置に生データ
     if (!sd.image_fp)
     {
       memset(sd.sector_buffer, 0xFF, 512);
@@ -73,21 +84,26 @@ namespace Sd
   {
     State& sd = sys.sd;
 
+    // 可変容量VHD
     if (sd.file_type == State::DYNAMIC_VHD)
     {
+      // 該当するブロック
       uint32_t block_num       = sd.current_lba / sd.sectors_per_block;
+      // ブロック内のセクタ番号オフセット
       uint32_t sector_in_block = sd.current_lba % sd.sectors_per_block;
 
       if (block_num >= (uint32_t)sd.bat.size()) return;
 
+      // 未割り当てブロックへの書き込み
       if (sd.bat[block_num] == 0xFFFFFFFF)
       {
         // 新規ブロックをファイル末尾（フッター直前）に確保
+        // フッターは一旦破壊して、あとで付け足す
         fseek(sd.image_fp, 0, SEEK_END);
         long file_end    = ftell(sd.image_fp);
         long block_start = file_end - 512; // フッター512バイト分を除く
 
-        // ビットマップ (全ビット1 = 書き込み済み) とゼロデータを書き込む
+        // ビットマップ (全ビット1 = 書き込み済み) とゼロデータで新規ブロックを埋める
         uint8_t bitmap[512];
         memset(bitmap, 0xFF, sizeof(bitmap));
         uint8_t zero[512];
@@ -100,10 +116,11 @@ namespace Sd
         // フッターを末尾に再書き込み
         fwrite(sd.vhd_footer, 1, 512, sd.image_fp);
 
-        // BAT エントリをメモリとファイル両方に即時反映
+        // 新規割り当てブロックのBAT エントリを作成
         uint32_t new_sector = (uint32_t)((uint64_t)block_start / 512);
         sd.bat[block_num] = new_sector;
 
+        // BATエントリをファイルに書き込む
         uint8_t be_val[4];
         write_be32(be_val, new_sector);
         fseek(sd.image_fp,
@@ -112,17 +129,20 @@ namespace Sd
         fwrite(be_val, 1, 4, sd.image_fp);
       }
 
-      uint64_t block_byte  = (uint64_t)sd.bat[block_num] * 512;
-      uint64_t sector_byte = block_byte
-                           + (uint64_t)sd.bitmap_sectors * 512
-                           + (uint64_t)sector_in_block   * 512;
-      fseek(sd.image_fp, (long)sector_byte, SEEK_SET);
+      // セクタの実バイトオフセット算出
+      uint64_t sector_offset = (uint64_t)(
+                                    sd.bat[block_num]   // ブロック先頭LBA
+                                  + sd.bitmap_sectors   // ブロック冒頭ビットマップのセクタ数
+                                  + sector_in_block     // ブロック内セクタオフセット
+                                ) * 512;
+      // セクタ書き込み
+      fseek(sd.image_fp, (long)sector_offset, SEEK_SET);
       fwrite(sd.sector_buffer, 1, 512, sd.image_fp);
       fflush(sd.image_fp);
       return;
     }
 
-    // FLAT / FIXED_VHD
+    // RAW / 固定VHD: 先頭から LBA×512 の位置に生データ
     if (!sd.image_fp) return;
     long offset = (long)sd.current_lba * 512;
     fseek(sd.image_fp, offset, SEEK_SET);
@@ -151,12 +171,14 @@ namespace Sd
     if (file_size >= 512)
     {
       fseek(sd.image_fp, file_size - 512, SEEK_SET);
+
+      // フッタのシグネチャがある
       if (fread(sd.vhd_footer, 1, 512, sd.image_fp) == 512 &&
           memcmp(sd.vhd_footer, "conectix", 8) == 0)
       {
         uint32_t disk_type = read_be32(sd.vhd_footer + 60);
 
-        if (disk_type == 2) // Fixed VHD
+        if (disk_type == 2) // 固定VHD
         {
           sd.file_type     = State::FIXED_VHD;
           sd.total_sectors = (uint32_t)((file_size - 512) / 512);
@@ -165,7 +187,7 @@ namespace Sd
           return true;
         }
 
-        if (disk_type == 3) // Dynamic VHD
+        if (disk_type == 3) // 可変VHD
         {
           sd.file_type = State::DYNAMIC_VHD;
 
@@ -207,7 +229,7 @@ namespace Sd
           return true;
         }
 
-        // Type 4 (Differencing) などは未サポート
+        // Type 4 (Differencing) などはサポートしない
         printf("[SD] Unsupported VHD disk type: %u\n", disk_type);
         fclose(sd.image_fp);
         sd.image_fp = nullptr;
