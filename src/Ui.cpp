@@ -11,13 +11,22 @@
 #include "Sd.hpp"
 #include "lib/vrEmu6502.h"
 
+extern "C" const char* platform_get_ui_font_path(void);
+
 namespace Fxt
 {
 namespace Ui
 {
 
-static float   s_dpi       = 1.0f;
-static ImFont* s_mono_font = nullptr; // ステータスバー用等幅フォント (ProggyClean)
+static float   s_dpi              = 1.0f;
+static ImFont* s_mono_font        = nullptr; // ステータスバー用等幅フォント (ProggyClean)
+static bool    s_has_japanese_font = false;  // 日本語フォント読み込み成否
+
+// 日本語フォントが利用可能なら ja を、そうでなければ en を返す
+static const char* L(const char* ja, const char* en)
+{
+  return s_has_japanese_font ? ja : en;
+}
 
 // ------------------------------------------------------------------
 //  Init  sokol_gfx 初期化後に一度だけ呼ぶ
@@ -33,16 +42,22 @@ void Init(int w, int h, float dpi)
 
   ImGuiIO& io = ImGui::GetIO();
 
-  // IPAexゴシック: メニュー等の日本語テキスト用（プロポーショナル）
+  // システムフォント (Hiragino Sans 等): メニュー等の日本語テキスト用
   {
-    ImFontConfig cfg = {};
-    cfg.OversampleH = 1;
-    cfg.OversampleV = 1;
-    io.Fonts->AddFontFromFileTTF(
-      "assets/ipaexg.ttf",
-      14.0f * dpi,
-      &cfg,
-      io.Fonts->GetGlyphRangesJapanese());
+    const char* font_path = platform_get_ui_font_path();
+    if (font_path && font_path[0] != '\0')
+    {
+      ImFontConfig cfg = {};
+      cfg.OversampleH = 1;
+      cfg.OversampleV = 1;
+      ImFont* f = io.Fonts->AddFontFromFileTTF(
+        font_path,
+        14.0f * dpi,
+        &cfg,
+        io.Fonts->GetGlyphRangesJapanese());
+      s_has_japanese_font = (f != nullptr);
+    }
+    // フォントが見つからない場合は後続の AddFontDefault() がデフォルトフォントになる
   }
 
   // ProggyClean: ステータスバーのレジスタ値表示用（等幅 ASCII）
@@ -75,18 +90,18 @@ void Render(State& ui, const System& sys, float win_w, float win_h)
   {
     ui.menu_h = ImGui::GetWindowHeight();
 
-    if (ImGui::BeginMenu("システム"))
+    if (ImGui::BeginMenu(L("システム", "System")))
     {
-      if (ImGui::MenuItem("リセット"))       ui.request_reset      = true;
-      if (ImGui::MenuItem("ハードリセット"))  ui.request_hard_reset = true;
+      if (ImGui::MenuItem(L("リセット",      "Reset")))      ui.request_reset      = true;
+      if (ImGui::MenuItem(L("ハードリセット", "Hard Reset"))) ui.request_hard_reset = true;
       ImGui::EndMenu();
     }
 
-    if (ImGui::BeginMenu("SDカード"))
+    if (ImGui::BeginMenu(L("SDカード", "SD Card")))
     {
-      if (ImGui::MenuItem("VHDファイルを選択...")) ui.request_vhd_load = true;
+      if (ImGui::MenuItem(L("VHDファイルを選択...", "Load VHD..."))) ui.request_vhd_load = true;
 #ifdef __EMSCRIPTEN__
-      if (ImGui::MenuItem("VHDファイルをダウンロード")) ui.request_vhd_dl = true;
+      if (ImGui::MenuItem(L("VHDファイルをダウンロード", "Download VHD"))) ui.request_vhd_dl = true;
 #endif
       ImGui::EndMenu();
     }

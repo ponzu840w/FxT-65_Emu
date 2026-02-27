@@ -21,7 +21,6 @@ ifeq ($(PLATFORM),web)
   LDFLAGS  := -sUSE_WEBGL2=1 -sWASM=1 -sALLOW_MEMORY_GROWTH=1 \
                -sEXPORTED_RUNTIME_METHODS=ccall \
                --preload-file assets/rom.bin \
-               --preload-file assets/ipaexg.ttf \
                --preload-file sdcard.vhd \
                --shell-file src/shell.html
   SRCS_CPP := $(wildcard $(SRC_DIR)/*.cpp)
@@ -36,7 +35,7 @@ else
   CXXFLAGS := -std=c++11 -Wall -DSOKOL_METAL -I$(IMGUI_DIR)
   CFLAGS   := -O2
   LDFLAGS  := -framework Cocoa -framework Metal -framework MetalKit \
-               -framework QuartzCore -framework AudioToolbox
+               -framework QuartzCore -framework AudioToolbox -framework CoreText
   SRCS_CPP := $(filter-out $(SRC_DIR)/sokol_impl_web.cpp, $(wildcard $(SRC_DIR)/*.cpp))
   SRCS_MM  := $(wildcard $(SRC_DIR)/*.mm)
   CLEAN_EXTRA :=

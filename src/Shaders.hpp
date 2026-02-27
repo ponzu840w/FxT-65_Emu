@@ -11,8 +11,7 @@
 // ---------------------------------------------------------------
 #ifdef SOKOL_GLES3
 
-static const char* vs_src = R"(
-#version 300 es
+static const char* vs_src = R"(#version 300 es
 uniform float scale_x;
 uniform float scale_y;
 uniform float offset_y;
@@ -28,8 +27,7 @@ void main() {
 }
 )";
 
-static const char* fs_src = R"(
-#version 300 es
+static const char* fs_src = R"(#version 300 es
 precision mediump float;
 uniform sampler2D tex;
 in vec2 uv;

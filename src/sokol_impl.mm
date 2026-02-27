@@ -17,12 +17,47 @@
 #include "lib/sokol/sokol_imgui.h"
 
 // ---------------------------------------------------------------
+//  macOS プラットフォーム関数
+// ---------------------------------------------------------------
+#import <Cocoa/Cocoa.h>
+#import <CoreText/CoreText.h>
+#include <string.h>
+#include "FxtSystem.hpp"
+#include "Sd.hpp"
+
+// システムフォントのファイルパスを返す (見つからなければ "")
+// Hiragino Sans (HiraginoSans-W3 等) を優先して検索する
+extern "C" const char* platform_get_ui_font_path(void)
+{
+  static char s_buf[2048] = "";
+  if (s_buf[0]) return s_buf; // キャッシュ済み
+
+  @autoreleasepool {
+    NSArray* names = @[@"HiraginoSans-W3", @"HiraKakuProN-W3", @"HiraKakuPro-W3"];
+    for (NSString* name in names) {
+      CTFontDescriptorRef desc = CTFontDescriptorCreateWithNameAndSize(
+        (__bridge CFStringRef)name, 14.0);
+      if (!desc) continue;
+      CFURLRef urlRef = (CFURLRef)CTFontDescriptorCopyAttribute(desc, kCTFontURLAttribute);
+      CFRelease(desc);
+      if (urlRef) {
+        NSURL* url = (__bridge NSURL*)urlRef;
+        if (url.fileSystemRepresentation) {
+          strlcpy(s_buf, url.fileSystemRepresentation, sizeof(s_buf));
+          CFRelease(urlRef);
+          return s_buf;
+        }
+        CFRelease(urlRef);
+      }
+    }
+  }
+  return "";
+}
+
+// ---------------------------------------------------------------
 //  macOS VHD ファイルピッカー
 //  NSOpenPanel で .vhd / .img を選択し、SD カードをマウントする
 // ---------------------------------------------------------------
-#import <Cocoa/Cocoa.h>
-#include "FxtSystem.hpp"
-#include "Sd.hpp"
 
 extern Fxt::System g_sys; // main.cpp で定義
 
