@@ -14,7 +14,7 @@ IMGUI_DIR  := $(SRC_DIR)/lib/imgui
 ifeq ($(PLATFORM),web)
   CXX      := em++
   CC       := emcc
-  TARGET   := web_build/fxt65.html
+  TARGET   := web_build/index.html
   OBJ_DIR  := obj/web
   CXXFLAGS := -std=c++11 -Wall -DSOKOL_GLES3 -O2 -I$(IMGUI_DIR)
   CFLAGS   := -O2

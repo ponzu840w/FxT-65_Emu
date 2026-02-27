@@ -61,6 +61,11 @@ static uint32_t     g_pixels[DISPLAY_W * DISPLAY_H];
 struct Uniforms { float scale_x; float scale_y; float offset_y; };
 static Uniforms g_uniforms;
 
+// 起動時コマンドキュー: cmd 引数の文字列を1文字ずつ UART に送る
+static std::string g_cmd_queue;
+// cmdキュー送出開始までの待機フレーム数 (cmd_delay=N で変更可, デフォルト 30 ≈ 0.5秒)
+static int g_cmd_delay_frames = 30;
+
 // ---------------------------------------------------------------
 //  platform_open_vhd 宣言 (macOS 実装は sokol_impl.mm)
 // ---------------------------------------------------------------
@@ -445,6 +450,24 @@ static void frame_cb(void)
   }
 #endif
 
+  // 起動時コマンドキュー: OS 初期化完了後に 1 文字ずつ UART へ送出
+  // 遅延でOS起動を待つ
+  {
+    static int s_cmd_delay_remain = g_cmd_delay_frames;
+    if (!g_cmd_queue.empty())
+    {
+      if (s_cmd_delay_remain > 0)
+      {
+        --s_cmd_delay_remain;
+      }
+      else if (!(g_sys.uart_status & 0b00001000))
+      {
+        process_uart_input((unsigned char)g_cmd_queue.front());
+        g_cmd_queue.erase(g_cmd_queue.begin());
+      }
+    }
+  }
+
   // エミュレーション実行
   int tpf = g_sys.cfg.ticks_per_frame();  // 1フレームあたり何ティックか
   int audio_count = 0;                    // バッファのインデックス
@@ -541,10 +564,7 @@ static void event_cb(const sapp_event* ev)
   if (simgui_handle_event(ev)) return;
 
 #ifdef __EMSCRIPTEN__
-  // sokol は window の capture phase にキーイベントを登録するため、
-  // terminal にフォーカスがあっても event_cb が呼ばれてしまう。
-  // JS 側が uartInputQueue に積む処理と二重にならないよう、
-  // terminal フォーカス中はキーイベントを無視する。
+  // web版でUART入力とPS/2キー押下の重複を防ぐ
   if (ev->type == SAPP_EVENTTYPE_KEY_DOWN || ev->type == SAPP_EVENTTYPE_KEY_UP)
   {
     if (EM_ASM_INT({
@@ -667,6 +687,35 @@ sapp_desc sokol_main(int argc, char* argv[])
   // シミュレーション速度倍率 speed=1.0
   if (sargs_exists("speed"))
     g_sys.cfg.sim_speed = (float)atof(sargs_value("speed"));
+
+  // cmd_delay=N : cmdキュー送出開始までの待機フレーム数 (デフォルト 30 ≈ 0.5秒)
+  if (sargs_exists("cmd_delay"))
+    g_cmd_delay_frames = atoi(sargs_value("cmd_delay"));
+
+  // 起動時コマンド cmd="dir\n" -> OS 起動後に UART へ送出
+  // \n \r \t \\ をエスケープシーケンスとして解釈
+  if (sargs_exists("cmd"))
+  {
+    for (const char* p = sargs_value("cmd"); *p; p++)
+    {
+      if (*p == '\\' && *(p + 1))
+      {
+        p++;
+        switch (*p)
+        {
+          case 'n':  g_cmd_queue += '\n'; break;
+          case 'r':  g_cmd_queue += '\r'; break;
+          case 't':  g_cmd_queue += '\t'; break;
+          case '\\': g_cmd_queue += '\\'; break;
+          default:   g_cmd_queue += '\\'; g_cmd_queue += *p; break;
+        }
+      }
+      else
+      {
+        g_cmd_queue += *p;
+      }
+    }
+  }
 
   sapp_desc desc = {};
   desc.init_cb      = init_cb;
