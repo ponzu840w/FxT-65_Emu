@@ -20,6 +20,7 @@
 #include <string>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#include <emscripten/html5.h>
 #else
 #include <unistd.h>
 #include <termios.h>
@@ -507,7 +508,38 @@ static void frame_cb(void)
 static void event_cb(const sapp_event* ev)
 {
   // ImGui にイベントを渡す（マウス/キーボード入力）
+  // Web: canvas バッファ(1024x768固定) と CSS 表示サイズが異なるため、
+  //       マウス座標を CSS px → バッファ px に変換してから渡す。
+#ifdef __EMSCRIPTEN__
+  {
+    sapp_event ev_scaled = *ev;
+    switch (ev->type)
+    {
+      case SAPP_EVENTTYPE_MOUSE_MOVE:
+      case SAPP_EVENTTYPE_MOUSE_DOWN:
+      case SAPP_EVENTTYPE_MOUSE_UP:
+      case SAPP_EVENTTYPE_MOUSE_ENTER:
+      case SAPP_EVENTTYPE_MOUSE_LEAVE:
+      case SAPP_EVENTTYPE_MOUSE_SCROLL:
+      {
+        double css_w = 0, css_h = 0;
+        emscripten_get_element_css_size("#canvas", &css_w, &css_h);
+        if (css_w > 0 && css_h > 0)
+        {
+          float sx = sapp_widthf()  / (float)css_w;
+          float sy = sapp_heightf() / (float)css_h;
+          ev_scaled.mouse_x *= sx;
+          ev_scaled.mouse_y *= sy;
+        }
+        break;
+      }
+      default: break;
+    }
+    if (simgui_handle_event(&ev_scaled)) return;
+  }
+#else
   if (simgui_handle_event(ev)) return;
+#endif
 
 #ifdef __EMSCRIPTEN__
   // web版でUART入力とPS/2キー押下の重複を防ぐ

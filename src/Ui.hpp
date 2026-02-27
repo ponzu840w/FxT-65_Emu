@@ -16,6 +16,7 @@ namespace Ui
     bool request_vhd_dl     = false;  // Web 専用
     float menu_h   = 20.0f;  // メニューバー実高さ（次フレームでレイアウトに反映）
     float status_h = 20.0f;  // ステータスバー実高さ
+    bool  lang_japanese = true;  // true=日本語 / false=English
   };
 
   void Init(int w, int h, float dpi);

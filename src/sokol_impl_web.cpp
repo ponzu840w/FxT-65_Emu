@@ -13,5 +13,5 @@
 #define SOKOL_IMGUI_IMPL
 #include "lib/sokol/sokol_imgui.h"
 
-// Web 環境ではシステムフォントを利用できないためスタブを返す
-extern "C" const char* platform_get_ui_font_path(void) { return ""; }
+// Web 環境では assets/ui_font.ttf (サブセット) を使用する
+extern "C" const char* platform_get_ui_font_path(void) { return "assets/ui_font.ttf"; }

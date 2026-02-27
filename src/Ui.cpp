@@ -21,11 +21,12 @@ namespace Ui
 static float   s_dpi              = 1.0f;
 static ImFont* s_mono_font        = nullptr; // ステータスバー用等幅フォント (ProggyClean)
 static bool    s_has_japanese_font = false;  // 日本語フォント読み込み成否
+static bool    s_use_japanese      = false;  // 実効言語（フォントあり && ユーザー設定）
 
-// 日本語フォントが利用可能なら ja を、そうでなければ en を返す
+// 実効言語に応じて ja / en を返す
 static const char* L(const char* ja, const char* en)
 {
-  return s_has_japanese_font ? ja : en;
+  return s_use_japanese ? ja : en;
 }
 
 // ------------------------------------------------------------------
@@ -56,6 +57,7 @@ void Init(int w, int h, float dpi)
         &cfg,
         io.Fonts->GetGlyphRangesJapanese());
       s_has_japanese_font = (f != nullptr);
+      // ASCII はサブセット/システムフォントに含まれるため追加マージ不要
     }
     // フォントが見つからない場合は後続の AddFontDefault() がデフォルトフォントになる
   }
@@ -85,6 +87,9 @@ void NewFrame(int w, int h, double delta_time, float dpi)
 // ------------------------------------------------------------------
 void Render(State& ui, const System& sys, float win_w, float win_h)
 {
+  // 実効言語: フォントが利用可能な場合のみ日本語を使う
+  s_use_japanese = s_has_japanese_font && ui.lang_japanese;
+
   // ---- メニューバー ----
   if (ImGui::BeginMainMenuBar())
   {
@@ -103,6 +108,21 @@ void Render(State& ui, const System& sys, float win_w, float win_h)
 #ifdef __EMSCRIPTEN__
       if (ImGui::MenuItem(L("VHDファイルをダウンロード", "Download VHD"))) ui.request_vhd_dl = true;
 #endif
+      ImGui::EndMenu();
+    }
+
+    // ---- 言語メニュー ----
+    if (ImGui::BeginMenu(L("言語", "Language")))
+    {
+      // 日本語オプション: フォントがない場合はグレーアウト
+      if (!s_has_japanese_font) ImGui::BeginDisabled();
+      if (ImGui::MenuItem("日本語", nullptr, s_has_japanese_font && ui.lang_japanese))
+        ui.lang_japanese = true;
+      if (!s_has_japanese_font) ImGui::EndDisabled();
+
+      if (ImGui::MenuItem("English", nullptr, !s_use_japanese))
+        ui.lang_japanese = false;
+
       ImGui::EndMenu();
     }
 

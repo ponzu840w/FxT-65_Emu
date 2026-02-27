@@ -21,6 +21,7 @@ ifeq ($(PLATFORM),web)
   LDFLAGS  := -sUSE_WEBGL2=1 -sWASM=1 -sALLOW_MEMORY_GROWTH=1 \
                -sEXPORTED_RUNTIME_METHODS=ccall \
                --preload-file assets/rom.bin \
+               --preload-file assets/ui_font.ttf \
                --preload-file sdcard.vhd \
                --shell-file src/shell.html
   SRCS_CPP := $(wildcard $(SRC_DIR)/*.cpp)
@@ -69,12 +70,26 @@ OBJS     := $(OBJS_CPP) $(OBJS_MM) $(OBJS_C) $(OBJS_IMGUI)
 #   ビルド
 # ----------
 
+UI_FONT := assets/ui_font.ttf
+
+# Web ビルドは UI フォントサブセットにも依存する
+ifeq ($(PLATFORM),web)
+EXTRA_DEPS := $(UI_FONT)
+else
+EXTRA_DEPS :=
+endif
+
 # リンク
-$(TARGET): $(OBJS) $(ROM)
+$(TARGET): $(OBJS) $(ROM) $(EXTRA_DEPS)
 	@echo "Linking $@"
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CXXFLAGS) -o $@ $(OBJS) $(LDFLAGS)
 	@echo "Build Complete."
+
+# UI フォントサブセット生成（Ui.cpp が変更されると自動再生成）
+$(UI_FONT): assets/ipaexg.ttf tools/make_ui_font_subset.py src/Ui.cpp
+	@echo "Generating UI font subset..."
+	@python3 tools/make_ui_font_subset.py
 
 # ROM ビルド: サブモジュールから assets/rom.bin を生成
 $(ROM): $(ROM_SRC)/rom.bin
