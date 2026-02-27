@@ -7,3 +7,8 @@
 #include "lib/sokol/sokol_glue.h"
 #include "lib/sokol/sokol_args.h"
 #include "lib/sokol/sokol_audio.h"
+
+// sokol_imgui 実装 (imgui.h は sokol_gfx.h / sokol_app.h の後に必須)
+#include "imgui.h"
+#define SOKOL_IMGUI_IMPL
+#include "lib/sokol/sokol_imgui.h"

@@ -7,18 +7,21 @@
 PLATFORM ?= native
 
 # ディレクトリ
-SRC_DIR   := src
-LIB_DIR   := $(SRC_DIR)/lib
+SRC_DIR    := src
+LIB_DIR    := $(SRC_DIR)/lib
+IMGUI_DIR  := $(SRC_DIR)/lib/imgui
 
 ifeq ($(PLATFORM),web)
   CXX      := em++
   CC       := emcc
   TARGET   := web_build/fxt65.html
   OBJ_DIR  := obj/web
-  CXXFLAGS := -std=c++11 -Wall -DSOKOL_GLES3 -O2
+  CXXFLAGS := -std=c++11 -Wall -DSOKOL_GLES3 -O2 -I$(IMGUI_DIR)
   CFLAGS   := -O2
   LDFLAGS  := -sUSE_WEBGL2=1 -sWASM=1 -sALLOW_MEMORY_GROWTH=1 \
+               -sEXPORTED_RUNTIME_METHODS=ccall \
                --preload-file assets/rom.bin \
+               --preload-file assets/ipaexg.ttf \
                --preload-file sdcard.vhd \
                --shell-file src/shell.html
   SRCS_CPP := $(wildcard $(SRC_DIR)/*.cpp)
@@ -30,7 +33,7 @@ else
   OBJCXX   := clang++
   TARGET   := fxt65
   OBJ_DIR  := obj/mac
-  CXXFLAGS := -std=c++11 -Wall -DSOKOL_METAL
+  CXXFLAGS := -std=c++11 -Wall -DSOKOL_METAL -I$(IMGUI_DIR)
   CFLAGS   := -O2
   LDFLAGS  := -framework Cocoa -framework Metal -framework MetalKit \
                -framework QuartzCore -framework AudioToolbox
@@ -48,15 +51,20 @@ ROM     := assets/rom.bin
 # ----------
 
 # ソースファイルをリストアップ
-SRCS_C   := $(wildcard $(LIB_DIR)/*.c)
+SRCS_C      := $(wildcard $(LIB_DIR)/*.c)
+SRCS_IMGUI  := $(IMGUI_DIR)/imgui.cpp \
+               $(IMGUI_DIR)/imgui_draw.cpp \
+               $(IMGUI_DIR)/imgui_tables.cpp \
+               $(IMGUI_DIR)/imgui_widgets.cpp
 
 # オブジェクトファイルのパスを生成
-OBJS_CPP := $(SRCS_CPP:%.cpp=$(OBJ_DIR)/%.o)
-OBJS_MM  := $(SRCS_MM:%.mm=$(OBJ_DIR)/%.o)
-OBJS_C   := $(SRCS_C:%.c=$(OBJ_DIR)/%.o)
+OBJS_CPP   := $(SRCS_CPP:%.cpp=$(OBJ_DIR)/%.o)
+OBJS_MM    := $(SRCS_MM:%.mm=$(OBJ_DIR)/%.o)
+OBJS_C     := $(SRCS_C:%.c=$(OBJ_DIR)/%.o)
+OBJS_IMGUI := $(SRCS_IMGUI:%.cpp=$(OBJ_DIR)/%.o)
 
 # オブジェクトファイルのリスト
-OBJS     := $(OBJS_CPP) $(OBJS_MM) $(OBJS_C)
+OBJS     := $(OBJS_CPP) $(OBJS_MM) $(OBJS_C) $(OBJS_IMGUI)
 
 # ----------
 #   ビルド
