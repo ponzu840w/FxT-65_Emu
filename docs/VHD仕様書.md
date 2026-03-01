@@ -111,7 +111,7 @@
 
 
 * **File Format Version**: メジャー/マイナーバージョン。現在は `0x00010000` で初期化する必要があります。
-* **Data Offset**: 次の構造体への絶対バイトオフセット。固定ディスクの場合は `0xFFFFFFFF` に設定します。
+* **Data Offset**: 次の構造体 (容量可変ディスクヘッダ) の絶対バイトオフセット。固定ディスクの場合は `0xFFFFFFFF` に設定します。
 * **Time Stamp**: 作成時刻（2000年1月1日 12:00:00 AM UTC/GMT からの秒数）。
 * **Creator Application**: 作成したアプリケーション。"vpc " (Virtual PC) または "vs  " (Virtual Server) など。
 * **Creator Version**: アプリケーションのバージョン。
