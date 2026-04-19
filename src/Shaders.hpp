@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------
 //  GLES3 (Web / Emscripten)
 // ---------------------------------------------------------------
-#ifdef SOKOL_GLES3
+#if defined(SOKOL_GLES3)
 
 static const char* vs_src = R"(#version 300 es
 uniform float scale_x;
@@ -33,6 +33,68 @@ uniform sampler2D tex;
 in vec2 uv;
 out vec4 frag_color;
 void main() { frag_color = texture(tex, uv); }
+)";
+
+// ---------------------------------------------------------------
+//  GLCORE (Linux / Windows OpenGL)
+// ---------------------------------------------------------------
+#elif defined(SOKOL_GLCORE)
+
+static const char* vs_src = R"(#version 330
+uniform float scale_x;
+uniform float scale_y;
+uniform float offset_y;
+out vec2 uv;
+void main() {
+    vec2 ndc = vec2(
+        (gl_VertexID & 1) != 0 ? 1.0 : -1.0,
+        (gl_VertexID & 2) != 0 ? -1.0 : 1.0);
+    gl_Position = vec4(ndc.x * scale_x, ndc.y * scale_y + offset_y, 0.0, 1.0);
+    uv = vec2(
+        (gl_VertexID & 1) != 0 ? 1.0 : 0.0,
+        (gl_VertexID & 2) != 0 ? 1.0 : 0.0);
+}
+)";
+
+static const char* fs_src = R"(#version 330
+uniform sampler2D tex;
+in vec2 uv;
+out vec4 frag_color;
+void main() { frag_color = texture(tex, uv); }
+)";
+
+// ---------------------------------------------------------------
+//  D3D11 / HLSL (Windows)
+// ---------------------------------------------------------------
+#elif defined(SOKOL_D3D11)
+
+static const char* vs_src = R"(
+cbuffer params : register(b0) {
+    float scale_x;
+    float scale_y;
+    float offset_y;
+};
+struct vs_out {
+    float4 pos : SV_Position;
+    float2 uv  : TEXCOORD0;
+};
+vs_out main(uint vid : SV_VertexID) {
+    vs_out o;
+    float2 ndc = float2((vid & 1) ? 1.0 : -1.0,
+                        (vid & 2) ? -1.0 : 1.0);
+    o.pos = float4(ndc.x * scale_x, ndc.y * scale_y + offset_y, 0.0, 1.0);
+    o.uv  = float2((vid & 1) ? 1.0 : 0.0,
+                   (vid & 2) ? 1.0 : 0.0);
+    return o;
+}
+)";
+
+static const char* fs_src = R"(
+Texture2D tex      : register(t0);
+SamplerState smp   : register(s0);
+float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
+    return tex.Sample(smp, uv);
+}
 )";
 
 // ---------------------------------------------------------------

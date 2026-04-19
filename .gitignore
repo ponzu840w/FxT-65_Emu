@@ -25,6 +25,7 @@ target
 *.pch
 
 fxt65
+fxt65.exe
 *.o
 obj/
 obj_web/

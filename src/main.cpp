@@ -21,7 +21,12 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #include <emscripten/html5.h>
-#else
+#endif
+
+// ネイティブ(非 Web) でかつ POSIX 環境でのみ端末ノンブロッキング入力を行う。
+// Windows(MinGW) では termios が存在しないので、CLI UART 経由のキー入力は無効化。
+#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
+#define FXT_HAS_TERM_IO 1
 #include <unistd.h>
 #include <termios.h>
 #include <fcntl.h>
@@ -168,7 +173,7 @@ static void update_uniforms(float win_w, float win_h, float menu_h, float status
   g_uniforms.offset_y = (status_h - menu_h) / win_h;
 }
 
-#ifndef __EMSCRIPTEN__
+#ifdef FXT_HAS_TERM_IO
 // 端末ノンブロッキング入力管理
 struct TerminalSession
 {
@@ -242,7 +247,7 @@ static void init_cb(void)
     return;
   }
 
-#ifndef __EMSCRIPTEN__
+#ifdef FXT_HAS_TERM_IO
   // 端末ノンブロッキング入力設定
   g_term = new TerminalSession();
 #endif
@@ -287,20 +292,21 @@ static void init_cb(void)
   {
     sg_shader_desc shd_desc = {};
     shd_desc.vertex_func.source   = vs_src;
-#ifndef SOKOL_GLES3
-    shd_desc.vertex_func.entry    = "_main";
-#endif
     shd_desc.fragment_func.source = fs_src;
-#ifndef SOKOL_GLES3
+#if defined(SOKOL_METAL)
+    // Metal: main は予約語なので _main を使う
+    shd_desc.vertex_func.entry    = "_main";
     shd_desc.fragment_func.entry  = "_main";
 #endif
     // 頂点シェーダーのユニフォームブロック slot 0 (アスペクト比スケール + オフセット)
     shd_desc.uniform_blocks[0].stage        = SG_SHADERSTAGE_VERTEX;
     shd_desc.uniform_blocks[0].size         = sizeof(Uniforms);
     shd_desc.uniform_blocks[0].layout       = SG_UNIFORMLAYOUT_NATIVE;
-#ifndef SOKOL_GLES3
+#if defined(SOKOL_METAL)
     shd_desc.uniform_blocks[0].msl_buffer_n = 0; // [[buffer(0)]]
-#else
+#elif defined(SOKOL_D3D11)
+    shd_desc.uniform_blocks[0].hlsl_register_b_n = 0; // register(b0)
+#elif defined(SOKOL_GLES3) || defined(SOKOL_GLCORE)
     shd_desc.uniform_blocks[0].glsl_uniforms[0].glsl_name = "scale_x";
     shd_desc.uniform_blocks[0].glsl_uniforms[0].type = SG_UNIFORMTYPE_FLOAT;
     shd_desc.uniform_blocks[0].glsl_uniforms[1].glsl_name = "scale_y";
@@ -319,7 +325,7 @@ static void init_cb(void)
     shd_desc.texture_sampler_pairs[0].stage        = SG_SHADERSTAGE_FRAGMENT;
     shd_desc.texture_sampler_pairs[0].view_slot    = 0;
     shd_desc.texture_sampler_pairs[0].sampler_slot = 0;
-#ifdef SOKOL_GLES3
+#if defined(SOKOL_GLES3) || defined(SOKOL_GLCORE)
     shd_desc.texture_sampler_pairs[0].glsl_name = "tex";
 #endif
     shd_desc.label = "chdz-shader";
@@ -607,7 +613,7 @@ static void event_cb(const sapp_event* ev)
   }
 }
 
-#ifndef __EMSCRIPTEN__
+#ifdef FXT_HAS_TERM_IO
 // ---------------------------------------------------------------
 //  端末復元 (cleanup_cb・シグナルハンドラ共通)
 // ---------------------------------------------------------------
@@ -630,7 +636,7 @@ static void signal_cleanup(int sig)
 // ---------------------------------------------------------------
 static void cleanup_cb(void)
 {
-#ifndef __EMSCRIPTEN__
+#ifdef FXT_HAS_TERM_IO
   restore_terminal();
 #endif
   Fxt::Ui::Shutdown();
@@ -646,7 +652,7 @@ static void cleanup_cb(void)
 // ---------------------------------------------------------------
 sapp_desc sokol_main(int argc, char* argv[])
 {
-#ifndef __EMSCRIPTEN__
+#ifdef FXT_HAS_TERM_IO
   // SIGINT/SIGTERM で端末状態を復元する
   signal(SIGINT,  signal_cleanup);
   signal(SIGTERM, signal_cleanup);

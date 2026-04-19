@@ -4,7 +4,18 @@
 #    設定
 # ----------
 
-PLATFORM ?= native
+# PLATFORM 自動判定:
+#   未指定時は uname -s から native を mac / linux に振り分ける。
+#   Web / Windows (MinGW クロスビルド) は明示的に指定する:
+#     make PLATFORM=web
+#     make PLATFORM=win
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  NATIVE_PLATFORM := mac
+else
+  NATIVE_PLATFORM := linux
+endif
+PLATFORM ?= $(NATIVE_PLATFORM)
 
 # ディレクトリ
 SRC_DIR    := src
@@ -12,6 +23,7 @@ LIB_DIR    := $(SRC_DIR)/lib
 IMGUI_DIR  := $(SRC_DIR)/lib/imgui
 
 ifeq ($(PLATFORM),web)
+  # ---- Web (Emscripten) ----
   CXX      := em++
   CC       := emcc
   TARGET   := web_build/index.html
@@ -24,10 +36,13 @@ ifeq ($(PLATFORM),web)
                --preload-file assets/ui_font.ttf \
                --preload-file sdcard.vhd \
                --shell-file src/shell.html
-  SRCS_CPP := $(wildcard $(SRC_DIR)/*.cpp)
+  # Web: mm / linux / win 実装は除外
+  SRCS_CPP := $(filter-out $(SRC_DIR)/sokol_impl_linux.cpp $(SRC_DIR)/sokol_impl_win.cpp, \
+                $(wildcard $(SRC_DIR)/*.cpp))
   SRCS_MM  :=
   CLEAN_EXTRA := web_build/fxt65.js web_build/fxt65.wasm web_build/fxt65.data
-else
+else ifeq ($(PLATFORM),mac)
+  # ---- macOS (Metal) ----
   CXX      := clang++
   CC       := cc
   OBJCXX   := clang++
@@ -37,9 +52,51 @@ else
   CFLAGS   := -O2
   LDFLAGS  := -framework Cocoa -framework Metal -framework MetalKit \
                -framework QuartzCore -framework AudioToolbox -framework CoreText
-  SRCS_CPP := $(filter-out $(SRC_DIR)/sokol_impl_web.cpp, $(wildcard $(SRC_DIR)/*.cpp))
+  # mac: web / linux / win 実装は除外
+  SRCS_CPP := $(filter-out $(SRC_DIR)/sokol_impl_web.cpp \
+                           $(SRC_DIR)/sokol_impl_linux.cpp \
+                           $(SRC_DIR)/sokol_impl_win.cpp, \
+                $(wildcard $(SRC_DIR)/*.cpp))
   SRCS_MM  := $(wildcard $(SRC_DIR)/*.mm)
   CLEAN_EXTRA :=
+else ifeq ($(PLATFORM),linux)
+  # ---- Linux (X11 + GL) ----
+  CXX      := g++
+  CC       := cc
+  TARGET   := fxt65
+  OBJ_DIR  := obj/linux
+  CXXFLAGS := -std=c++11 -Wall -O2 -DSOKOL_GLCORE -I$(IMGUI_DIR) -pthread
+  CFLAGS   := -O2 -pthread
+  LDFLAGS  := -pthread -lX11 -lXi -lXcursor -lGL -ldl -lm -lasound
+  # linux: web / mac(mm) / win 実装は除外
+  SRCS_CPP := $(filter-out $(SRC_DIR)/sokol_impl_web.cpp \
+                           $(SRC_DIR)/sokol_impl_win.cpp, \
+                $(wildcard $(SRC_DIR)/*.cpp))
+  SRCS_MM  :=
+  CLEAN_EXTRA :=
+else ifeq ($(PLATFORM),win)
+  # ---- Windows (MinGW-w64 クロスビルド) ----
+  MINGW_PREFIX ?= x86_64-w64-mingw32
+  CXX      := $(MINGW_PREFIX)-g++
+  CC       := $(MINGW_PREFIX)-gcc
+  TARGET   := fxt65.exe
+  OBJ_DIR  := obj/win
+  # VR_EMU_6502_STATIC: vrEmu6502.h の __declspec(dllimport) を無効化し静的リンクする
+  CXXFLAGS := -std=c++11 -Wall -O2 -DSOKOL_D3D11 -DVR_EMU_6502_STATIC \
+              -I$(IMGUI_DIR) -D_WIN32_WINNT=0x0601
+  CFLAGS   := -O2 -DVR_EMU_6502_STATIC
+  # スタンドアロン配布 & Windows サブシステム
+  LDFLAGS  := -static -static-libgcc -static-libstdc++ -mwindows \
+              -lkernel32 -luser32 -lshell32 -lgdi32 -lole32 -lcomdlg32 \
+              -ld3d11 -ldxgi -ld3dcompiler -lwinmm
+  # win: web / mac(mm) / linux 実装は除外
+  SRCS_CPP := $(filter-out $(SRC_DIR)/sokol_impl_web.cpp \
+                           $(SRC_DIR)/sokol_impl_linux.cpp, \
+                $(wildcard $(SRC_DIR)/*.cpp))
+  SRCS_MM  :=
+  CLEAN_EXTRA :=
+else
+  $(error Unknown PLATFORM: $(PLATFORM). Use one of: mac, linux, win, web)
 endif
 
 # ROM
@@ -120,7 +177,7 @@ $(OBJ_DIR)/%.o: %.c
 OS_SRC := miracos
 
 os:
-	cd $(OS_SRC) && ./makeos.sh
+	cd $(OS_SRC) && bash ./makeos.sh
 
 # ROM を強制再ビルド
 rom:
@@ -130,7 +187,7 @@ rom:
 # クリーンアップ
 clean:
 	@echo "Cleaning up."
-	@rm -rf obj/ web_build/ fxt65
+	@rm -rf obj/ web_build/ fxt65 fxt65.exe
 
 # ----------
 #  SDカード イメージ変換
