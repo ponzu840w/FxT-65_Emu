@@ -353,11 +353,29 @@ static void init_cb(void)
 // ---------------------------------------------------------------
 //  frame_cb  フレームごとに呼ばれる
 // ---------------------------------------------------------------
-#ifndef __EMSCRIPTEN__
-static int   g_input_cnt  = 0;
-#endif
 static int   g_audio_acc  = 0;
 static float g_audio_buf[AUDIO_BUF_SIZE];
+
+// UART 入力ソースから 1 文字取得 (なければ -1)
+static int pull_uart_char(bool cmd_ready)
+{
+  // 起動時コマンドキューを優先
+  if (cmd_ready && !g_cmd_queue.empty())
+  {
+    int ch = (unsigned char)g_cmd_queue.front();
+    g_cmd_queue.erase(g_cmd_queue.begin());
+    return ch;
+  }
+#ifdef __EMSCRIPTEN__
+  return EM_ASM_INT({
+    return (typeof uartInputQueue !== 'undefined' && uartInputQueue.length > 0)
+      ? uartInputQueue.shift() : -1;
+  });
+#else
+  int c = getchar();
+  return (c == EOF) ? -1 : c;
+#endif
+}
 
 // UART 入力を処理するヘルパー
 static void process_uart_input(int ch)
@@ -383,41 +401,14 @@ static void frame_cb(void)
   Fxt::Ui::NewFrame((int)win_w, (int)win_h,
                     sapp_frame_duration(), sapp_dpi_scale());
 
-#ifdef __EMSCRIPTEN__
-  // Web: JavaScript の uartInputQueue からフレームごとにポーリング
-  {
-    int ch = EM_ASM_INT({
-      return (typeof uartInputQueue !== 'undefined' && uartInputQueue.length > 0)
-        ? uartInputQueue.shift() : -1;
-    });
-    if (ch >= 0) process_uart_input(ch);
-  }
-#else
-  // ネイティブ: 標準入力処理 (4096サイクルに1回)
-  g_input_cnt += g_sys.cfg.ticks_per_frame();
-  if (g_input_cnt >= 4096)
-  {
-    g_input_cnt = 0;
-    int ch = getchar();
-    if (ch != EOF) process_uart_input(ch);
-  }
-#endif
-
-  // 起動時コマンドキュー: OS 初期化完了後に 1 文字ずつ UART へ送出
-  // 遅延でOS起動を待つ
+  // 起動時コマンドキュー: OS 初期化を待つフレーム遅延の管理
+  bool cmd_ready = false;
   {
     static int s_cmd_delay_remain = g_cmd_delay_frames;
     if (!g_cmd_queue.empty())
     {
-      if (s_cmd_delay_remain > 0)
-      {
-        --s_cmd_delay_remain;
-      }
-      else if (!(g_sys.uart_status & 0b00001000))
-      {
-        process_uart_input((unsigned char)g_cmd_queue.front());
-        g_cmd_queue.erase(g_cmd_queue.begin());
-      }
+      if (s_cmd_delay_remain > 0) --s_cmd_delay_remain;
+      else                        cmd_ready = true;
     }
   }
 
@@ -429,6 +420,13 @@ static void frame_cb(void)
   {
     // FxT-65のティック=CPUクロックを進める
     Fxt::Tick(g_sys);
+
+    // 1024 サイクルごとに UART 入力ポーリング (RxReady 空時のみ次の文字を投入)
+    if ((i & 0x3FF) == 0 && !(g_sys.uart_status & 0b00001000))
+    {
+      int ch = pull_uart_char(cmd_ready);
+      if (ch >= 0) process_uart_input(ch);
+    }
 
     // 音声サンプリング（CPUクロックよりも低頻度）
     // cpu_hzに対して、sr/cpu_hz の頻度で実行
