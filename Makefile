@@ -190,28 +190,48 @@ clean:
 	@rm -rf obj/ web_build/ fxt65 fxt65.exe
 
 # ----------
-#  SDカード イメージ変換
+#  SDカード イメージ
 # ----------
 #
-# ワークフロー:
-#   1. ./mksd.sh          : sdcard.img を新規作成（FAT32クラスタサイズ32セクタ等の制約を満たす）
-#   2. make vhd           : sdcard.img → sdcard.vhd (Dynamic VHD, ネイティブ・Web 共用)
-#   3. make img           : sdcard.vhd → sdcard.img (macOS で編集する際に展開)
-#                           ↓ hdiutil attach -imagekey diskimage-class=CRawDiskImage sdcard.img
-#                           ↓ ファイル編集
-#                           ↓ hdiutil detach /Volumes/MCOS
-#   4. make vhd           : 編集後の sdcard.img を再度 VHD に変換
+# クリーンビルド (miracos/bin/ から新規作成):
+#   make vhd       → sdcard.vhd を作成（中間 .img は /tmp に sparse、自動削除）
+#   make img       → sdcard.img を作成（4 GiB sparse、編集可能状態）
+#
+# 変換:
+#   make img2vhd   → 既存 sdcard.img を sdcard.vhd に変換
+#   make vhd2img   → 既存 sdcard.vhd を sdcard.img に展開（編集用）
+#
+# 編集ワークフロー例:
+#   make vhd2img
+#   hdiutil attach -imagekey diskimage-class=CRawDiskImage sdcard.img
+#     ↓ ファイル編集 ↓
+#   hdiutil detach /Volumes/MCOS
+#   make img2vhd
 
-# sdcard.img → sdcard.vhd (Dynamic VHD) に変換
-# Dynamic VHD は未使用ブロック（2MB 単位）を省略し 2GB → 数 MB に圧縮できる
-vhd: tools/to_dynamic_vhd.py sdcard.img
-	python3 tools/to_dynamic_vhd.py sdcard.img sdcard.vhd
+# クリーンビルド: miracos/bin/ から sdcard.vhd を新規作成
+# 中間 .img は /tmp に sparse で作り、変換後に自動削除
+vhd: tools/to_dynamic_vhd.py mksd.sh
+	@TMP=$$(mktemp -t sdcard.XXXXXX.img); \
+	  trap "rm -f $$TMP" EXIT INT TERM; \
+	  ./mksd.sh $$TMP && \
+	  python3 tools/to_dynamic_vhd.py $$TMP sdcard.vhd
 	@echo "作成完了: sdcard.vhd (Dynamic VHD)"
 
-# sdcard.vhd → sdcard.img (フラット) に展開（macOS 編集用）
-img: tools/vhd_to_img.py sdcard.vhd
+# クリーンビルド: miracos/bin/ から sdcard.img を新規作成 (4 GiB sparse)
+img: mksd.sh
+	./mksd.sh sdcard.img
+	@echo "作成完了: sdcard.img (4 GiB sparse)"
+
+# sdcard.img → sdcard.vhd (Dynamic VHD) に変換
+# Dynamic VHD は未使用ブロック（2MB 単位）を省略し 4GB → 数 MB に圧縮できる
+img2vhd: tools/to_dynamic_vhd.py sdcard.img
+	python3 tools/to_dynamic_vhd.py sdcard.img sdcard.vhd
+	@echo "変換完了: sdcard.vhd (Dynamic VHD)"
+
+# sdcard.vhd → sdcard.img (フラット sparse) に展開（macOS 編集用）
+vhd2img: tools/vhd_to_img.py sdcard.vhd
 	python3 tools/vhd_to_img.py sdcard.vhd sdcard.img
 	@echo "展開完了: sdcard.img"
 	@echo "マウント:   hdiutil attach -imagekey diskimage-class=CRawDiskImage sdcard.img"
 
-.PHONY: clean rom vhd img os
+.PHONY: clean rom vhd img img2vhd vhd2img os

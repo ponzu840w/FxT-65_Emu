@@ -7,26 +7,44 @@
 #   - macOS: hdiutil + diskutil + mkfs.fat (brew) + mount (sudo あり)
 #   - Linux / WSL: sfdisk + mkfs.fat + mtools (sudo 不要、ループバック不要)
 #
-# 出力:
-#   sdcard.img (2GB, MBR 1 パーティション, FAT32, クラスタ=32セクタ/16KB, FAT数=2)
+# 出力 (4 GiB sparse, MBR 1 パーティション, FAT32, クラスタ=64セクタ/32KB, FAT数=2)
+# クラスタ 32 KiB の場合 2 GiB だと FAT32 規格の最小クラスタ数 65525 を下回るため 4 GiB が必要
+#
+# Usage: ./mksd.sh [output.img]
+#   出力先を省略した場合は ./sdcard.img を作成する
 
 set -euo pipefail
 
-IMG=sdcard.img
-SIZE_MB=2048          # SD カード全体サイズ
-PART_START_SECTORS=2048  # パーティション開始セクタ (512B 単位, 1MB 位置)
-# クラスタサイズ 32 セクタ (= 16KB) / FAT 数 2 は FxT-65 ファームウェアの要件
+IMG="${1:-sdcard.img}"
+SIZE_MB=4096                 # SD カード全体サイズ (4 GiB)
+PART_START_SECTORS=2048      # パーティション開始セクタ (512B 単位, 1MB 位置)
+SECTORS_PER_CLUSTER=64       # 64 sec × 512B = 32 KiB クラスタ
+NUM_FATS=2                   # FAT 数
 
 OS=$(uname -s)
+DISK=""
+MNT=""
 
-echo "Creating $IMG (${SIZE_MB}MB, FAT32 cluster=32 sectors)..."
+cleanup() {
+  if [[ -n "$MNT" && -d "$MNT" ]]; then
+    sudo umount "$MNT" 2>/dev/null || true
+    rmdir "$MNT" 2>/dev/null || true
+  fi
+  if [[ -n "$DISK" ]]; then
+    hdiutil detach "$DISK" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+echo "Creating $IMG (${SIZE_MB}MB sparse, FAT32 cluster=${SECTORS_PER_CLUSTER} sectors)..."
 rm -f "$IMG"
 
 if [ "$OS" = "Darwin" ]; then
   # ==================================================================
-  #  macOS フロー (オリジナル)
+  #  macOS フロー
   # ==================================================================
-  dd if=/dev/zero of="$IMG" bs=1m count=$SIZE_MB
+  # sparse: 実体は書き込みが発生したぶんだけ確保される
+  dd if=/dev/zero of="$IMG" bs=1m count=0 seek=$SIZE_MB
 
   DISK=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount "$IMG" \
     | head -1 | awk '{print $1}')
@@ -37,7 +55,7 @@ if [ "$OS" = "Darwin" ]; then
   diskutil unmount "${DISK}s1"
 
   # クラスタサイズ指定で再フォーマット
-  sudo "$(brew --prefix)/sbin/mkfs.fat" -F 32 -s 32 -f 2 "${DISK}s1"
+  sudo "$(brew --prefix)/sbin/mkfs.fat" -F 32 -s "$SECTORS_PER_CLUSTER" -f "$NUM_FATS" "${DISK}s1"
 
   # MIRACOS システムファイルをコピー
   MNT=$(mktemp -d)
@@ -49,8 +67,10 @@ if [ "$OS" = "Darwin" ]; then
   fi
   sudo umount "$MNT"
   rmdir "$MNT"
+  MNT=""
 
   hdiutil detach "$DISK"
+  DISK=""
 
 else
   # ==================================================================
@@ -82,7 +102,7 @@ EOF
   total_sectors=$(( SIZE_MB * 1024 * 1024 / 512 ))
   part_sectors=$(( total_sectors - PART_START_SECTORS ))
   part_blocks_1k=$(( part_sectors / 2 ))
-  mkfs.fat -F 32 -s 32 -f 2 -n MCOS \
+  mkfs.fat -F 32 -s "$SECTORS_PER_CLUSTER" -f "$NUM_FATS" -n MCOS \
            --offset="${PART_START_SECTORS}" \
            "$IMG" "${part_blocks_1k}" >/dev/null
 
@@ -100,4 +120,4 @@ EOF
 fi
 
 echo "完了: $IMG"
-echo "  ネイティブ版: make vhd      # sdcard.img → sdcard.vhd"
+echo "  ネイティブ版: make img2vhd  # sdcard.img → sdcard.vhd"
