@@ -182,7 +182,7 @@ void Render(State& ui, const System& sys, float win_w, float win_h)
       double dt = sapp_frame_duration();
       s_accum    += dt;
       s_frame_cnt++;
-      s_tick_acc += sys.cfg.ticks_per_frame();
+      s_tick_acc += sys.last_frame_ticks;
 
       if (s_accum >= 0.5)
       {

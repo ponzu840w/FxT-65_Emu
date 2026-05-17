@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm> // std::min
+#include <chrono>    // 実時間計測 (frame_cb 適応的サイクル数)
 #include <string>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -31,6 +32,16 @@
 #include <termios.h>
 #include <fcntl.h>
 #include <signal.h>
+#endif
+
+// Web 以外はエミュレーションを専用スレッドで走らせる。
+// 目的: macOS 等で window がバックグラウンド/隠蔽されると frame_cb が
+// 大幅に間引かれ/停止するため、描画と切り離して常にリアルタイムで進める。
+#if !defined(__EMSCRIPTEN__)
+#define FXT_THREADED_EMU 1
+#include <thread>
+#include <mutex>
+#include <atomic>
 #endif
 
 // ---------------------------------------------------------------
@@ -71,6 +82,16 @@ static Uniforms g_uniforms;
 static std::string g_cmd_queue;
 // cmdキュー送出開始までの待機フレーム数 (cmd_delay=N で変更可, デフォルト 30 ≈ 0.5秒)
 static int g_cmd_delay_frames = 30;
+
+#ifdef FXT_THREADED_EMU
+// エミュレーション専用スレッドと共有状態保護用ミューテックス。
+// 取得粒度: 1 バッチ (= ~1ms ぶんのサイクル) ごとに lock/unlock するので
+// メインスレッド (frame_cb / event_cb) の待ち時間は最大 ~1ms 程度。
+static std::mutex        g_sys_mutex;
+static std::atomic<bool> g_emu_running{false};
+static std::thread       g_emu_thread;
+static void emulation_thread_fn(void); // 前方宣言
+#endif
 
 // ---------------------------------------------------------------
 //  platform_open_vhd 宣言 (macOS 実装は sokol_impl.mm)
@@ -348,6 +369,12 @@ static void init_cb(void)
   // パスアクション (黒クリア)
   g_pass_action.colors[0].load_action = SG_LOADACTION_CLEAR;
   g_pass_action.colors[0].clear_value = {0.0f, 0.0f, 0.0f, 1.0f};
+
+#ifdef FXT_THREADED_EMU
+  // エミュレーションスレッド起動 (init 完了後・frame_cb 開始前)
+  g_emu_running.store(true, std::memory_order_relaxed);
+  g_emu_thread = std::thread(emulation_thread_fn);
+#endif
 }
 
 // ---------------------------------------------------------------
@@ -392,6 +419,91 @@ static void process_uart_input(int ch)
   }
 }
 
+// ---------------------------------------------------------------
+//  エミュレーション 1 バッチを実行する共通ヘルパ
+//  呼び出し側でロックを取った上で呼ぶ。
+// ---------------------------------------------------------------
+static void run_emulation_batch(double dt, bool cmd_ready)
+{
+  int tpf = g_sys.cfg.ticks_for_duration(dt);
+  g_sys.last_frame_ticks = tpf;
+  int audio_count = 0;
+  int sr = saudio_sample_rate();
+
+  for (int i = 0; i < tpf; i++)
+  {
+    Fxt::Tick(g_sys);
+
+    // 1024 サイクルごとに UART 入力ポーリング (RxReady 空時のみ次の文字を投入)
+    if ((i & 0x3FF) == 0 && !(g_sys.uart_status & 0b00001000))
+    {
+      int ch = pull_uart_char(cmd_ready);
+      if (ch >= 0) process_uart_input(ch);
+    }
+
+    // 音声サンプリング (cpu_hz に対して sr/cpu_hz の頻度)
+    g_audio_acc += sr;
+    if (g_audio_acc >= g_sys.cfg.cpu_hz)
+    {
+      g_audio_acc -= g_sys.cfg.cpu_hz;
+      if (audio_count < AUDIO_BUF_SIZE)
+        g_audio_buf[audio_count++] = Psg::Calc(g_sys.psg) / INT16_FULL_SCALE;
+    }
+  }
+
+  // saudio_push はスレッドセーフ (saudio が内部 mutex で同期する)
+  if (audio_count > 0) saudio_push(g_audio_buf, audio_count);
+}
+
+#ifdef FXT_THREADED_EMU
+// ---------------------------------------------------------------
+//  エミュレーションスレッド本体
+//
+//  - 実時間ベースで CPU サイクル数を決定
+//  - 1 バッチあたり ~1ms 程度 (BATCH_DT) を狙う
+//  - メインスレッド側 (frame_cb / event_cb) のロック待ちが
+//    最大でも ~1ms 程度になるよう粒度を細かく保つ
+//  - 1 回の遅延蓄積は MAX_BATCH_DT で頭打ち (フォアグラウンド復帰時の
+//    一気の取り戻しを防ぐ)
+// ---------------------------------------------------------------
+static void emulation_thread_fn(void)
+{
+  using clock = std::chrono::steady_clock;
+  auto t_start = clock::now();
+  auto t_last  = t_start;
+  constexpr double BATCH_DT     = 0.001; // 1ms 目標
+  constexpr double MAX_BATCH_DT = 0.05;  // 1 バッチ最大 50ms ぶん
+  const double cmd_delay_sec = (double)g_cmd_delay_frames / (double)g_sys.cfg.HOST_FPS;
+
+  while (g_emu_running.load(std::memory_order_relaxed))
+  {
+    auto now = clock::now();
+    double dt = std::chrono::duration<double>(now - t_last).count();
+
+    if (dt < BATCH_DT)
+    {
+      // バッチ間隔を満たすまで短くスリープ
+      long sleep_us = (long)((BATCH_DT - dt) * 1e6);
+      if (sleep_us > 0)
+        std::this_thread::sleep_for(std::chrono::microseconds(sleep_us));
+      continue;
+    }
+
+    // 蓄積分を頭打ち (suspend からの復帰など)
+    if (dt > MAX_BATCH_DT) dt = MAX_BATCH_DT;
+    t_last = now;
+
+    double elapsed = std::chrono::duration<double>(now - t_start).count();
+    bool cmd_ready = !g_cmd_queue.empty() && elapsed >= cmd_delay_sec;
+
+    {
+      std::lock_guard<std::mutex> lock(g_sys_mutex);
+      run_emulation_batch(dt, cmd_ready);
+    }
+  }
+}
+#endif // FXT_THREADED_EMU
+
 static void frame_cb(void)
 {
   float win_w = sapp_widthf();
@@ -401,6 +513,8 @@ static void frame_cb(void)
   Fxt::Ui::NewFrame((int)win_w, (int)win_h,
                     sapp_frame_duration(), sapp_dpi_scale());
 
+#ifndef FXT_THREADED_EMU
+  // ---- Web (シングルスレッド) パス: 旧来通り frame_cb 内で進める ----
   // 起動時コマンドキュー: OS 初期化を待つフレーム遅延の管理
   bool cmd_ready = false;
   {
@@ -412,40 +526,38 @@ static void frame_cb(void)
     }
   }
 
-  // エミュレーション実行
-  int tpf = g_sys.cfg.ticks_per_frame();  // 1フレームあたり何ティックか
-  int audio_count = 0;                    // バッファのインデックス
-  int sr  = saudio_sample_rate();         // 音声サンプリングレート
-  for (int i = 0; i < tpf; i++)
+  // 前回 frame_cb からの実経過時間を測定し、CPU サイクル数を決定する。
+  using clock = std::chrono::steady_clock;
+  static auto s_last_time = clock::now();
+  static bool s_first_frame = true;
+  auto now = clock::now();
+  double dt;
+  if (s_first_frame)
   {
-    // FxT-65のティック=CPUクロックを進める
-    Fxt::Tick(g_sys);
-
-    // 1024 サイクルごとに UART 入力ポーリング (RxReady 空時のみ次の文字を投入)
-    if ((i & 0x3FF) == 0 && !(g_sys.uart_status & 0b00001000))
-    {
-      int ch = pull_uart_char(cmd_ready);
-      if (ch >= 0) process_uart_input(ch);
-    }
-
-    // 音声サンプリング（CPUクロックよりも低頻度）
-    // cpu_hzに対して、sr/cpu_hz の頻度で実行
-    g_audio_acc += sr;
-    if (g_audio_acc >= g_sys.cfg.cpu_hz)
-    {
-      // カウンタをリセットするが端数を保存
-      g_audio_acc -= g_sys.cfg.cpu_hz;
-      // PSG出力信号レベル（16bit int）を正規化して音声出力
-      if (audio_count < AUDIO_BUF_SIZE)
-      {
-        g_audio_buf[audio_count++] = Psg::Calc(g_sys.psg) / INT16_FULL_SCALE;
-      }
-    }
+    dt = 1.0 / (double)g_sys.cfg.HOST_FPS;
+    s_first_frame = false;
   }
-  saudio_push(g_audio_buf, audio_count);
+  else
+  {
+    dt = std::chrono::duration<double>(now - s_last_time).count();
+  }
+  s_last_time = now;
+  constexpr double MAX_FRAME_DT = 0.1;
+  if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
 
-  // フレームバッファレンダリング
+  run_emulation_batch(dt, cmd_ready);
+#endif
+
+  // フレームバッファレンダリング (ネイティブはスレッドからエミュ状態が
+  // 並行変更されるためロックして整合性を確保)
+#ifdef FXT_THREADED_EMU
+  {
+    std::lock_guard<std::mutex> lock(g_sys_mutex);
+    Chdz::RenderFrame(g_sys.chdz, g_pixels);
+  }
+#else
   Chdz::RenderFrame(g_sys.chdz, g_pixels);
+#endif
 
   // テクスチャ更新
   {
@@ -472,14 +584,20 @@ static void frame_cb(void)
   sg_end_pass();
   sg_commit();
 
-  // UI リクエスト処理
+  // UI リクエスト処理 (エミュレーション状態を書き換えるのでロックを取る)
   if (g_ui.request_reset)
   {
+#ifdef FXT_THREADED_EMU
+    std::lock_guard<std::mutex> lock(g_sys_mutex);
+#endif
     vrEmu6502Reset(g_sys.cpu);
     g_ui.request_reset = false;
   }
   if (g_ui.request_hard_reset)
   {
+#ifdef FXT_THREADED_EMU
+    std::lock_guard<std::mutex> lock(g_sys_mutex);
+#endif
     Fxt::Init(g_sys);
     g_ui.request_hard_reset = false;
   }
@@ -497,6 +615,12 @@ static void frame_cb(void)
 #else
   if (g_ui.request_vhd_load)
   {
+    // モーダルダイアログ表示中はメインスレッドがブロックされるが、
+    // その間エミュレーションスレッドも sd 整合性のためロックで停止する。
+    // ダイアログを閉じるまで操作のないシナリオなので許容範囲。
+#ifdef FXT_THREADED_EMU
+    std::lock_guard<std::mutex> lock(g_sys_mutex);
+#endif
     platform_open_vhd();
     g_ui.request_vhd_load = false;
   }
@@ -561,6 +685,10 @@ static void event_cb(const sapp_event* ev)
   {
     // キーボード押下
     case SAPP_EVENTTYPE_KEY_DOWN:
+    {
+#ifdef FXT_THREADED_EMU
+      std::lock_guard<std::mutex> lock(g_sys_mutex);
+#endif
 #ifndef __EMSCRIPTEN__
       if (keyin_to_uart)
       {
@@ -591,13 +719,19 @@ static void event_cb(const sapp_event* ev)
         // PS/2キーボードとして入力
         Ps2::KeyDown(g_sys.ps2, (int)ev->key_code);
       }
+    }
       break;
 
     case SAPP_EVENTTYPE_KEY_UP:
+    {
+#ifdef FXT_THREADED_EMU
+      std::lock_guard<std::mutex> lock(g_sys_mutex);
+#endif
 #ifndef __EMSCRIPTEN__
       if (!keyin_to_uart)
 #endif
         Ps2::KeyUp(g_sys.ps2, (int)ev->key_code);
+    }
       break;
 
     case SAPP_EVENTTYPE_RESIZED:
@@ -634,6 +768,11 @@ static void signal_cleanup(int sig)
 // ---------------------------------------------------------------
 static void cleanup_cb(void)
 {
+#ifdef FXT_THREADED_EMU
+  // エミュレーションスレッドを停止 (sg_shutdown 等の前に必須)
+  g_emu_running.store(false, std::memory_order_relaxed);
+  if (g_emu_thread.joinable()) g_emu_thread.join();
+#endif
 #ifdef FXT_HAS_TERM_IO
   restore_terminal();
 #endif

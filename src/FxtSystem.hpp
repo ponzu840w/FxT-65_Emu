@@ -32,10 +32,17 @@ namespace Fxt
     int vblank_period()   const { return cpu_hz / VBLANK_HZ; }
     // PS/2クロック半周期 [CPUサイクル]
     int ps2_half_period() const { return cpu_hz / PS2_CLK_HZ / 2; }
-    // 1フレームあたりのCPUサイクル数
+    // 1フレームあたりのCPUサイクル数 (HOST_FPS=60 固定基準: UI 表示等で使用)
     int ticks_per_frame() const
     {
       return (int)((double)cpu_hz * sim_speed / HOST_FPS);
+    }
+    // 経過時間 [秒] に対応するCPUサイクル数
+    int ticks_for_duration(double dt_sec) const
+    {
+      double t = (double)cpu_hz * sim_speed * dt_sec;
+      if (t < 0.0) return 0;
+      return (int)t;
     }
   };
 
@@ -78,6 +85,9 @@ namespace Fxt
 
     // エミュレータ設定
     EmulatorConfig cfg;
+
+    // 直近フレームで実行した CPU サイクル数 (UI 表示用 / 適応的に決まる)
+    int last_frame_ticks = 0;
 
     // VBLANK (VIA CA2) 生成用カウンタ
     int vblank_cnt = 0;
